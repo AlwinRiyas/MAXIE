@@ -5,7 +5,7 @@ class OllamaClient:
 
     def __init__(self):
 
-        self.url = "http://localhost:11434/api/generate"
+        self.url = "http://127.0.0.1:11434/api/generate"
 
         self.model = "llama3.2:3b"
 
@@ -17,11 +17,28 @@ class OllamaClient:
             "stream": False
         }
 
-        response = requests.post(
-            self.url,
-            json=payload
-        )
+        try:
 
-        data = response.json()
+            response = requests.post(
+                self.url,
+                json=payload,
+                timeout=60
+            )
 
-        return data["response"]
+            response.raise_for_status()
+
+            data = response.json()
+
+            return data.get("response", "I couldn't generate a response.")
+
+        except requests.exceptions.ConnectionError:
+
+            return "Ollama is running but MAXIE couldn't connect. Please verify the Ollama service."
+
+        except requests.exceptions.Timeout:
+
+            return "Ollama took too long to respond."
+
+        except Exception as e:
+
+            return f"Ollama Error: {e}"

@@ -16,6 +16,10 @@ class ConversationEngine:
 
         while True:
 
+            self.voice_manager.waiting()
+
+            print("\n🎤 Waiting for speech...")
+
             command = self.voice_manager.listen()
 
             if not command:
@@ -32,6 +36,8 @@ class ConversationEngine:
                 break
 
             response = self.router.process(command)
+
+            self.voice_manager.speaking()
 
             print(f"\nMAXIE : {response}")
 

@@ -1,8 +1,6 @@
 from Voice.audio_manager import AudioManager
-from Voice.microphone import Microphone
-from Voice.voice_activity import VoiceActivity
-from Voice.wake_word_engine import WakeWordEngine
 from Voice.speech_engine import SpeechEngine
+from Voice.voice_state import VoiceState
 
 
 class VoiceManager:
@@ -10,20 +8,33 @@ class VoiceManager:
     def __init__(self):
 
         self.audio = AudioManager()
-        self.microphone = Microphone()
-        self.activity = VoiceActivity()
-        self.wake_word = WakeWordEngine()
+
         self.speech = SpeechEngine()
 
-    def initialize(self):
+        self.state = VoiceState.WAITING
 
-        print("Initializing Voice Manager...")
+    def set_state(self, state):
 
-        if self.microphone.status():
-            print("✅ Microphone Connected")
-        else:
-            print("❌ Microphone Not Found")
+        self.state = state
+
+    def get_state(self):
+
+        return self.state
 
     def listen(self):
 
-        return self.speech.recognize()
+        self.state = VoiceState.LISTENING
+
+        text = self.speech.recognize()
+
+        self.state = VoiceState.PROCESSING
+
+        return text
+
+    def speaking(self):
+
+        self.state = VoiceState.SPEAKING
+
+    def waiting(self):
+
+        self.state = VoiceState.WAITING
