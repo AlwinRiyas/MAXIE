@@ -15,6 +15,7 @@ class SpeechPipeline:
 
         print("🎤 Waiting for speech...")
 
-        # Placeholder implementation.
-        # We'll replace this with true streaming VAD in the next step.
-        return self.transcriber.transcribe("voice.wav")
+        # Temporary until VAD integration
+        filename = "voice.wav"
+
+        return self.transcriber.transcribe(filename)

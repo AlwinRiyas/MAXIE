@@ -1,5 +1,9 @@
-from Voice.voice_activity import VoiceActivity
+import numpy as np
 
-vad = VoiceActivity()
+from Voice.vad_engine import VADEngine
 
-print("Voice Activity Detector Ready.")
+vad = VADEngine()
+
+audio = np.zeros(16000, dtype=np.float32)
+
+print(vad.has_voice(audio))

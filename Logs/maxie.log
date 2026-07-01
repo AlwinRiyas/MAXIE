@@ -112,3 +112,96 @@
 2026-07-01 11:46:19,063 | INFO | HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Systran/faster-whisper-base/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/tokenizer.json "HTTP/1.1 200 OK"
 2026-07-01 11:46:20,322 | INFO | HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Systran/faster-whisper-base/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/vocabulary.txt "HTTP/1.1 200 OK"
 2026-07-01 11:46:20,343 | INFO | HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Systran/faster-whisper-base/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/tokenizer.json "HTTP/1.1 200 OK"
+2026-07-01 12:02:57,492 | INFO | Imported existing <module 'comtypes.gen' from 'C:\\Users\\ALWIN\\AppData\\Roaming\\Python\\Python314\\site-packages\\comtypes\\gen\\__init__.py'>
+2026-07-01 12:02:57,492 | INFO | Using writeable comtypes cache directory: 'C:\Users\ALWIN\AppData\Roaming\Python\Python314\site-packages\comtypes\gen'
+2026-07-01 12:02:58,672 | INFO | HTTP Request: GET https://huggingface.co/api/models/Systran/faster-whisper-base/revision/main "HTTP/1.1 200 OK"
+2026-07-01 12:02:59,040 | INFO | MAXIE Boot Started
+2026-07-01 12:03:21,419 | INFO | MAXIE Started Successfully
+2026-07-01 12:03:22,557 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:23,356 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:24,079 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:24,796 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:25,508 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:26,228 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:26,939 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:27,650 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:28,353 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:29,075 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:29,780 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:30,498 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:31,201 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:31,916 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:32,619 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:33,344 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:34,050 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:34,754 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:35,460 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:36,165 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:36,885 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:37,581 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:38,298 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:39,033 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:39,750 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:40,482 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:41,187 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:41,913 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:42,621 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:43,365 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:44,078 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:44,791 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:45,512 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:46,221 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:46,937 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:47,654 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:48,365 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:49,089 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:49,805 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:50,508 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:51,219 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:51,912 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:52,613 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:53,318 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:54,021 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:54,728 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:55,430 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:03:56,130 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:33:23,813 | INFO | Imported existing <module 'comtypes.gen' from 'C:\\Users\\ALWIN\\AppData\\Roaming\\Python\\Python314\\site-packages\\comtypes\\gen\\__init__.py'>
+2026-07-01 12:33:23,813 | INFO | Using writeable comtypes cache directory: 'C:\Users\ALWIN\AppData\Roaming\Python\Python314\site-packages\comtypes\gen'
+2026-07-01 12:33:25,152 | INFO | HTTP Request: GET https://huggingface.co/api/models/Systran/faster-whisper-base/revision/main "HTTP/1.1 200 OK"
+2026-07-01 12:33:25,559 | INFO | MAXIE Boot Started
+2026-07-01 12:33:47,004 | INFO | MAXIE Started Successfully
+2026-07-01 12:33:48,105 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:33:58,125 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:34:02,552 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:34:06,871 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:34:11,325 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:34:15,629 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:34:19,919 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:34:24,342 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:34:29,068 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:34:33,362 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:34:37,724 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:34:42,300 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:34:46,908 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:34:51,464 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:34:56,403 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:35:01,139 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:35:05,588 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:35:10,015 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:35:14,821 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:35:19,530 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:46:48,089 | INFO | Imported existing <module 'comtypes.gen' from 'C:\\Users\\ALWIN\\AppData\\Roaming\\Python\\Python314\\site-packages\\comtypes\\gen\\__init__.py'>
+2026-07-01 12:46:48,090 | INFO | Using writeable comtypes cache directory: 'C:\Users\ALWIN\AppData\Roaming\Python\Python314\site-packages\comtypes\gen'
+2026-07-01 12:46:49,364 | INFO | HTTP Request: GET https://huggingface.co/api/models/Systran/faster-whisper-base/revision/main "HTTP/1.1 200 OK"
+2026-07-01 12:46:49,792 | INFO | MAXIE Boot Started
+2026-07-01 12:47:11,918 | INFO | MAXIE Started Successfully
+2026-07-01 12:47:13,015 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:47:21,034 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:47:25,546 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:47:29,851 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:47:34,186 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:47:38,509 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:47:42,887 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:47:47,297 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:47:51,607 | INFO | Processing audio with duration 00:05.000
+2026-07-01 12:47:56,199 | INFO | Processing audio with duration 00:05.000

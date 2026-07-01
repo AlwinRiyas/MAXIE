@@ -10,13 +10,9 @@ class VoiceManager:
     def __init__(self):
 
         self.audio = AudioManager()
-
         self.microphone = Microphone()
-
         self.activity = VoiceActivity()
-
         self.wake_word = WakeWordEngine()
-
         self.speech = SpeechEngine()
 
     def initialize(self):
@@ -24,9 +20,10 @@ class VoiceManager:
         print("Initializing Voice Manager...")
 
         if self.microphone.status():
-
-            print("Microphone Connected")
-
+            print("✅ Microphone Connected")
         else:
+            print("❌ Microphone Not Found")
 
-            print("Microphone Not Found")
+    def listen(self):
+
+        return self.speech.recognize()
