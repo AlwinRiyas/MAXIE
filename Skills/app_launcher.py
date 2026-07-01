@@ -1,23 +1,23 @@
-import subprocess
+import os
+
+from Skills.application_registry import ApplicationRegistry
 
 
 class AppLauncher:
 
-    def open(self, app):
+    def __init__(self):
 
-        apps = {
+        self.registry = ApplicationRegistry()
 
-            "calculator": "calc",
+    def open(self, app_name):
 
-            "notepad": "notepad",
+        apps = self.registry.load()
 
-            "paint": "mspaint",
+        app_name = app_name.lower()
 
-        }
+        if app_name in apps:
 
-        if app in apps:
-
-            subprocess.Popen(apps[app])
+            os.startfile(apps[app_name])
 
             return True
 

@@ -15,6 +15,7 @@ from Brain.command_engine import CommandEngine
 
 from Conversation.conversation_engine import ConversationEngine
 
+from Brain.brain_router import BrainRouter
 
 class Maxie:
 
@@ -35,8 +36,13 @@ class Maxie:
         # Brain
         self.command = CommandEngine()
 
+        self.router = BrainRouter(self.command)
+
         # Conversation
-        self.conversation = ConversationEngine(self.command)
+        self.conversation = ConversationEngine(
+    self.router,
+    self.voice
+)
 
     def start(self):
 

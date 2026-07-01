@@ -1,10 +1,12 @@
+import json
 import os
 
 
 class ApplicationDiscovery:
 
-    def __init__(self):
+    DATABASE = "Skills/app_database.json"
 
+    def __init__(self):
         self.apps = {}
 
     def scan(self):
@@ -31,4 +33,18 @@ class ApplicationDiscovery:
 
                         self.apps[name] = os.path.join(root, file)
 
+        self.save_database()
+
         return self.apps
+
+    def save_database(self):
+
+        os.makedirs("Skills", exist_ok=True)
+
+        with open(self.DATABASE, "w", encoding="utf-8") as f:
+
+            json.dump(
+                self.apps,
+                f,
+                indent=4
+            )

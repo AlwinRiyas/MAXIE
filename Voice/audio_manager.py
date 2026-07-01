@@ -1,23 +1,70 @@
+import sounddevice as sd
+
+
 class AudioManager:
 
     def __init__(self):
 
-        self.is_speaking = False
+        self.selected_device = None
 
-        self.is_listening = False
+    def list_microphones(self):
 
-    def start_listening(self):
+        devices = sd.query_devices()
 
-        self.is_listening = True
+        microphones = []
 
-    def stop_listening(self):
+        for index, device in enumerate(devices):
 
-        self.is_listening = False
+            if device["max_input_channels"] > 0:
 
-    def start_speaking(self):
+                microphones.append((index, device["name"]))
 
-        self.is_speaking = True
+        return microphones
 
-    def stop_speaking(self):
+    def get_best_microphone(self):
 
-        self.is_speaking = False
+        microphones = self.list_microphones()
+
+        bluetooth_keywords = [
+            "buds",
+            "headset",
+            "airpods",
+            "bluetooth",
+            "oneplus",
+            "sony",
+            "jbl",
+            "boat",
+            "boult",
+            "realme"
+        ]
+
+        # First preference: Bluetooth headset mic
+        for index, name in microphones:
+
+            lower = name.lower()
+
+            if any(word in lower for word in bluetooth_keywords):
+
+                self.selected_device = index
+
+                return index
+
+        # Second preference: Laptop microphone
+        for index, name in microphones:
+
+            lower = name.lower()
+
+            if "microphone array" in lower:
+
+                self.selected_device = index
+
+                return index
+
+        # Last available microphone
+        if microphones:
+
+            self.selected_device = microphones[0][0]
+
+            return microphones[0][0]
+
+        return None
