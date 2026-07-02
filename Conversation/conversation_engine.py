@@ -25,13 +25,26 @@ class ConversationEngine:
             if not command:
                 continue
 
+            command = command.strip().lower()
+
             print(f"\nYou : {command}")
 
-            if command.lower() == "exit":
+            # Ignore Whisper hallucinations
+            if command in [
+                "i exit",
+                "exit.",
+                "i exit.",
+                "i'm exit",
+                "i'm exiting",
+                "..."
+            ]:
+                continue
 
-                self.voice_engine.speak("Goodbye Alwin.")
+            if command == "exit":
 
                 print("\nMAXIE : Goodbye Alwin.")
+
+                self.voice_engine.speak("Goodbye Alwin.")
 
                 break
 

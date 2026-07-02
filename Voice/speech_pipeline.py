@@ -1,5 +1,4 @@
-from Voice.audio_stream import AudioStream
-from Voice.voice_activity import VoiceActivity
+from Voice.audio_recorder import AudioRecorder
 from Voice.transcriber import Transcriber
 
 
@@ -7,15 +6,18 @@ class SpeechPipeline:
 
     def __init__(self):
 
-        self.stream = AudioStream()
-        self.vad = VoiceActivity()
+        self.recorder = AudioRecorder()
         self.transcriber = Transcriber()
 
     def recognize(self):
 
-        print("🎤 Waiting for speech...")
+        print("\n🎤 Waiting for speech...")
 
-        # Temporary until VAD integration
-        filename = "voice.wav"
+        filename = self.recorder.record(
+            seconds=3,
+            filename="voice.wav"
+        )
 
-        return self.transcriber.transcribe(filename)
+        text = self.transcriber.transcribe(filename)
+
+        return text

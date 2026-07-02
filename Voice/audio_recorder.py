@@ -15,7 +15,7 @@ class AudioRecorder:
 
         self.audio_manager = AudioManager()
 
-    def record(self, seconds=6, filename="voice.wav"):
+    def record(self, seconds=3, filename="voice.wav"):
 
         device = self.audio_manager.get_best_microphone()
 

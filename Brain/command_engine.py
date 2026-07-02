@@ -21,7 +21,15 @@ class CommandEngine:
 
         if intent == "OPEN_APP":
 
-            app = command.replace("open", "").strip()
+            app = (
+    command.lower()
+    .replace("open", "")
+    .replace("launch", "")
+    .replace("start", "")
+    .replace("run", "")
+    .replace(".", "")
+    .strip()
+)
 
             return self.skills.execute(intent, app)
 
