@@ -11,13 +11,22 @@ class SpeechPipeline:
 
     def recognize(self):
 
-        print("\n🎤 Waiting for speech...")
-
         filename = self.recorder.record(
-            seconds=3,
-            filename="voice.wav"
+            filename="voice.wav",
+            max_seconds=10,
+            silence_seconds=1.0
         )
 
-        text = self.transcriber.transcribe(filename)
+        if filename is None:
 
-        return text
+            return ""
+
+        text = self.transcriber.transcribe(
+            filename
+        )
+
+        if not text:
+
+            return ""
+
+        return text.strip()

@@ -1,4 +1,5 @@
 import requests
+import time
 
 
 class OllamaClient:
@@ -14,16 +15,25 @@ class OllamaClient:
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "stream": False
+            "stream": False,
+            "keep_alive": "30m"
         }
 
         try:
 
+            print("\n🧠 Thinking...")
+
+            start = time.perf_counter()
+
             response = requests.post(
                 self.url,
                 json=payload,
-                timeout=60
+                timeout=120
             )
+
+            elapsed = time.perf_counter() - start
+
+            print(f"⚡ {elapsed:.2f}s")
 
             response.raise_for_status()
 
@@ -32,13 +42,10 @@ class OllamaClient:
             return data.get("response", "I couldn't generate a response.")
 
         except requests.exceptions.ConnectionError:
-
-            return "Ollama is running but MAXIE couldn't connect. Please verify the Ollama service."
+            return "Ollama is not running."
 
         except requests.exceptions.Timeout:
-
-            return "Ollama took too long to respond."
+            return "Ollama timeout."
 
         except Exception as e:
-
             return f"Ollama Error: {e}"

@@ -10,16 +10,21 @@ class VADEngine:
 
         self.model = load_silero_vad()
 
+        self.sample_rate = 16000
+
         print("Silero Ready.")
 
     def has_voice(self, audio):
 
-        audio = torch.from_numpy(audio).float()
+        audio = torch.as_tensor(
+            audio,
+            dtype=torch.float32
+        ).flatten()
 
         timestamps = get_speech_timestamps(
             audio,
             self.model,
-            sampling_rate=16000
+            sampling_rate=self.sample_rate
         )
 
         return len(timestamps) > 0

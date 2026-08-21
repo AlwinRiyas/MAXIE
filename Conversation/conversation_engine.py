@@ -9,6 +9,39 @@ class ConversationEngine:
         self.voice_engine = voice_engine
         self.voice_manager = VoiceManager()
 
+    def is_exit_command(self, command):
+
+        command = command.lower().strip()
+
+        command = command.replace(".", "")
+        command = command.replace(",", "")
+        command = command.replace("!", "")
+        command = command.replace("?", "")
+
+        exit_commands = {
+            "exit",
+            "quit",
+            "close",
+            "goodbye",
+            "bye",
+            "stop",
+            "shutdown maxie",
+            "close maxie",
+            "exit maxie",
+            "quit maxie",
+            "i want to exit",
+            "i want to quit",
+            "i am exiting",
+            "i'm exiting",
+            "i am going to exit",
+            "i'm going to exit",
+        }
+
+        if command in exit_commands:
+            return True
+
+        return False
+
     def start(self):
 
         print("\n========== MAXIE VOICE MODE ==========")
@@ -18,33 +51,24 @@ class ConversationEngine:
 
             self.voice_manager.waiting()
 
-            print("\n🎤 Waiting for speech...")
-
             command = self.voice_manager.listen()
 
             if not command:
                 continue
 
-            command = command.strip().lower()
+            command = command.strip()
 
             print(f"\nYou : {command}")
 
-            # Ignore Whisper hallucinations
-            if command in [
-                "i exit",
-                "exit.",
-                "i exit.",
-                "i'm exit",
-                "i'm exiting",
-                "..."
-            ]:
-                continue
+            if self.is_exit_command(command):
 
-            if command == "exit":
+                self.voice_manager.speaking()
 
                 print("\nMAXIE : Goodbye Alwin.")
 
-                self.voice_engine.speak("Goodbye Alwin.")
+                self.voice_engine.speak(
+                    "Goodbye Alwin."
+                )
 
                 break
 
