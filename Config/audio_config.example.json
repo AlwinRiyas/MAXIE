@@ -19,6 +19,7 @@
   "tts_engine": "auto",
   "piper_voice": "en_US-lessac-medium",
   "edge_voice": "en-US-JennyNeural",
+  "tts_synth_timeout": 60,
   "echo_cooldown_seconds": 0.45,
   "weak_speech_gain": 4.0,
   "weak_rms_threshold": 0.005,
