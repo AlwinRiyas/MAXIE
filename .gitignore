@@ -1,3 +1,4 @@
+.gitignore
 __pycache__/
 *.pyc
 
@@ -5,6 +6,8 @@ venv/
 .env
 
 voice.wav
+barge_in.wav
+*.wav
 
 .cache/
 
@@ -22,4 +25,22 @@ dist/
 
 *.zip
 
+# Android (build artifacts — source lives in Android/)
+Android/.gradle/
+Android/.idea/
+Android/local.properties
+Android/**/build/
+
+# Downloaded neural TTS models (large binaries)
+Config/tts_models/
+
+# Live user configuration — may contain a remote_server.token.
+# These are created automatically by Config/config.py on first run.
+# Commit Config/*.example.json instead, never the live files.
+Config/*.json
+!Config/*.example.json
+
 Memory/memory.json
+Memory/maxie_memory.db*
+Memory/todos.json
+Logs/screenshot.png

@@ -1,0 +1,30 @@
+{
+  "assistant_name": "Maxie",
+  "user_name": "YourName",
+  "language": "en",
+  "version": "1.3.0",
+  "wake_word_enabled": false,
+  "wake_word": "hey maxie",
+  "auto_listen": true,
+  "ai": {
+    "provider": "ollama",
+    "url": "http://127.0.0.1:11434",
+    "model": "llama3.2:3b",
+    "temperature": 0.2,
+    "max_tokens": 150,
+    "num_ctx": 2048,
+    "context_turns": 6
+  },
+  "weather": {
+    "city": "Chennai",
+    "latitude": null,
+    "longitude": null
+  },
+  "remote_server": {
+    "enabled": false,
+    "host": "127.0.0.1",
+    "port": 8778,
+    "token": ""
+  },
+  "allow_local_power_control": false
+}
