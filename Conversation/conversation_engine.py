@@ -88,8 +88,28 @@ class ConversationEngine:
         return future
 
     def stop(self):
+        # TD-10: clear running FIRST so the worker loop terminates, then
+        # drain every queued future so callers (RemoteServer, GUI) never
+        # block a full timeout on a response that will never arrive.
         self.running.clear()
+
+        shutdown_error = RuntimeError("MAXIE is shutting down.")
+        while True:
+            try:
+                item = self.remote_queue.get_nowait()
+            except queue.Empty:
+                break
+            if item is None:
+                continue
+            _text, future = item
+            if not future.done():
+                future.set_exception(shutdown_error)
+
         self.remote_queue.put(None)
+        worker = self._remote_worker
+        if worker is not None and worker is not threading.current_thread():
+            worker.join(timeout=2)
+
         if self.barge_in is not None:
             self.barge_in.stop()
         self.voice_engine.shutdown()

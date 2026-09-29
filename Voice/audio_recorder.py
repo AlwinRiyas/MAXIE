@@ -127,6 +127,11 @@ class AudioRecorder:
 
         print("🎤 Listening...")
 
+        # Re-calibrate the ambient floor for this session (TD-05). Without a
+        # production caller the floor latches to whichever blocks happened to
+        # arrive in a previous session and never recovers.
+        self.vad.reset_noise()
+
         try:
             speech = self._listen_loop(
                 incoming, max_total_blocks, speech_samples, block_seconds,

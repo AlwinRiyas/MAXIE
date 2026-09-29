@@ -211,5 +211,80 @@ class RemotePlaybackReservationTest(unittest.TestCase):
         self.assertTrue(engine.voice_manager.machine.reserve_capture())
 
 
+class StopResolvesQueuedFuturesTest(unittest.TestCase):
+    """TD-10: stop() must resolve every queued future, or the remote
+    server blocks the whole 20 s DEFAULT_TIMEOUT and the GUI callback
+    never fires."""
+
+    def test_stop_resolves_queued_remote_futures(self):
+        engine = _EngineFactory.build()
+        unblock = threading.Event()
+
+        def slow_process(text):
+            unblock.wait(timeout=10)
+            return f"done: {text}"
+
+        engine.router.process = slow_process
+
+        first = engine.submit_text("first command")
+        self.assertFalse(first.done())
+        # Let the worker pick `first` up (it will block in slow_process).
+        deadline = time.time() + 5
+        while not engine._remote_worker or not engine._remote_worker.is_alive():
+            time.sleep(0.01)
+            if time.time() > deadline:
+                self.fail("remote worker never started")
+
+        time.sleep(0.2)  # let the worker dequeue `first`
+        second = engine.submit_text("second command")  # still queued
+
+        engine.stop()
+        unblock.set()  # release the worker so the in-flight future completes
+
+        self.assertTrue(
+            second.done(),
+            "a queued future must be resolved by stop(), not orphaned",
+        )
+        with self.assertRaises(RuntimeError):
+            second.result()
+
+        deadline = time.time() + 5
+        while not first.done() and time.time() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(first.done(), "an in-flight future must also resolve")
+
+    def test_stop_returns_without_waiting_full_timeout(self):
+        engine = _EngineFactory.build()
+        unblock = threading.Event()
+
+        def never_end(text):
+            unblock.wait(timeout=30)
+            return "late"
+
+        engine.router.process = never_end
+
+        blocked = engine.submit_text("block me")
+        deadline = time.time() + 5
+        while not engine._remote_worker or not engine._remote_worker.is_alive():
+            time.sleep(0.01)
+            if time.time() > deadline:
+                self.fail("remote worker never started")
+        time.sleep(0.2)
+
+        start = time.time()
+        engine.stop()
+        elapsed = time.time() - start
+        unblock.set()
+
+        self.assertLess(
+            elapsed, 5.0,
+            "stop() must not hang on an in-flight remote command",
+        )
+        deadline = time.time() + 5
+        while not blocked.done() and time.time() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(blocked.done())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -56,7 +56,8 @@ class Maxie:
                                        port=int(remote_cfg.get("port", 8778)),
                                        token=remote_cfg.get("token", ""),
                                        on_command=self.conversation.submit_text,
-                                       on_voice=self._handle_voice)
+                                       on_voice=self._handle_voice,
+                                       config=remote_cfg)
 
         self._install_signal_handlers()
 

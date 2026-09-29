@@ -28,7 +28,8 @@ class MemoryEngine:
         return self.db.save(key, value, kind)
 
     def update(self, key, value):
-        return self.db.save(key, value)
+        """TD-40: update preserves the existing kind."""
+        return self.db.update(key, value)
 
     def recall(self, key):
         return self.db.recall(key)
@@ -69,8 +70,16 @@ class MemoryEngine:
             return False
 
         words = [w for w in sentence.split() if w not in {"i", "am", "that"}]
-        key = " ".join(words[:5]).strip(" .")
-        self.db.save(key or sentence, sentence, kind="note")
+        base = " ".join(words[:5]).strip(" .") or sentence
+
+        # TD-41: first-5-words keys collide ("i like coffee a lot" vs
+        # "i like coffee a little"), so disambiguate with a stable content
+        # hash. The key stays human-readable; collisions become unique.
+        import hashlib
+
+        digest = hashlib.sha1(sentence.encode("utf-8")).hexdigest()[:8]
+        key = f"{base} #{digest}"
+        self.db.save(key, sentence, kind="note")
         return True
 
     def recall_for(self, prompt, top=3):

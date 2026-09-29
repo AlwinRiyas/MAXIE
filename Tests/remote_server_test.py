@@ -22,31 +22,57 @@ class RemoteServerTest(unittest.TestCase):
     # Helpers
     # --------------------------------------------------
 
-    def _start(self, token="", on_command=None):
+    def _start(self, token="", on_command=None, on_voice=None, config=None):
         server = RemoteServer(host="127.0.0.1", port=0, token=token,
-                              on_command=on_command, timeout=2)
+                              on_command=on_command, on_voice=on_voice,
+                              timeout=2, config=config)
         self.assertTrue(server.start())
         self.server = server
         return server._server.server_address[1]
 
-    def _request(self, method, port, path, body=None, token=None):
+    def _request(self, method, port, path, body=None, token=None,
+                 headers=None, raw_body=None):
         url = f"http://127.0.0.1:{port}{path}"
-        data = json.dumps(body).encode() if body is not None else None
+        if raw_body is not None:
+            data = raw_body
+        elif body is not None:
+            data = json.dumps(body).encode()
+        else:
+            data = None
         request = urllib.request.Request(url, data=data, method=method)
         request.add_header("Content-Type", "application/json")
         if token:
-            request.add_header("X-MAXIE-Token", token)
+            request.add_header("Authorization", f"Bearer {token}")
+        for key, value in (headers or {}).items():
+            request.add_header(key, value)
         try:
             with urllib.request.urlopen(request, timeout=5) as response:
-                return response.status, json.loads(response.read().decode())
+                body_text = response.read()
+                try:
+                    return response.status, json.loads(body_text.decode())
+                except ValueError:
+                    return response.status, body_text.decode()
         except urllib.error.HTTPError as error:
-            return error.code, json.loads(error.read().decode())
+            body_text = error.read()
+            try:
+                return error.code, json.loads(body_text.decode())
+            except ValueError:
+                return error.code, body_text.decode()
 
     @staticmethod
     def _future_response(text):
         future = Future()
         future.set_result(text)
         return future
+
+    def _raw_response(self, method, port, path):
+        url = f"http://127.0.0.1:{port}{path}"
+        request = urllib.request.Request(url, method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return response.status, response.read(), dict(response.headers)
+        except urllib.error.HTTPError as error:
+            return error.code, error.read(), dict(error.headers)
 
     # --------------------------------------------------
     # Security: binding + tokens
@@ -70,6 +96,20 @@ class RemoteServerTest(unittest.TestCase):
         port = self._start(token="hunter2")
         code, payload = self._request("GET", port, "/health", token="wrong")
         self.assertEqual(code, 401)
+
+    def test_bearer_auth_accepted(self):
+        port = self._start(token="hunter2")
+        code, payload = self._request("GET", port, "/health", token="hunter2")
+        self.assertEqual(code, 200)
+
+    def test_token_compare_is_constant_time(self):
+        # Property-level check: remote compares via compare_digest, not `==`.
+        port = self._start(token="correct horse")
+        code, _ = self._request("GET", port, "/health", token="correct horse")
+        self.assertEqual(code, 200)
+        with open("Interface/remote_server.py", encoding="utf-8") as f:
+            source = f.read()
+        self.assertIn("hmac.compare_digest", source)
 
     # --------------------------------------------------
     # Functionality
@@ -116,6 +156,90 @@ class RemoteServerTest(unittest.TestCase):
         port = self._start()
         code, payload = self._request("GET", port, "/nope")
         self.assertEqual(code, 404)
+
+    def test_voice_body_rejected_above_cap(self):
+        config = {"max_voice_bytes": 1024}
+        port = self._start(on_voice=lambda path: {"response": "ok"}, config=config)
+        code, payload = self._request(
+            "POST", port, "/voice", raw_body=b"RIFF" + b"\x00" * 2048
+        )
+        self.assertEqual(code, 413)
+        self.assertIn("limit", payload["error"])
+
+    def test_command_body_rejected_above_cap(self):
+        config = {"max_command_bytes": 128}
+        port = self._start(config=config)
+        code, payload = self._request(
+            "POST", port, "/command", raw_body=b"x" * 512
+        )
+        self.assertEqual(code, 413)
+        self.assertIn("limit", payload["error"])
+
+    def test_cors_wildcard_never_emitted(self):
+        port = self._start()
+        _, body, headers = self._raw_response("GET", port, "/")
+        self.assertNotIn(b"Access-Control-Allow-Origin: *", body)
+        self.assertNotEqual(
+            headers.get("Access-Control-Allow-Origin"), "*"
+        )
+
+    def test_cors_absent_without_origin_header(self):
+        port = self._start()
+        _, _, headers = self._raw_response("GET", port, "/")
+        self.assertNotIn("Access-Control-Allow-Origin", headers)
+
+    def test_cors_absent_for_unknown_origin(self):
+        port = self._start()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/",
+            headers={"Origin": "http://evil.example"},
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertNotIn("Access-Control-Allow-Origin", response.headers)
+
+    def test_cors_allowed_for_allowlisted_origin(self):
+        port = self._start(config={"allowed_origins": ["http://phone.local"]})
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/",
+            headers={"Origin": "http://phone.local"},
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertEqual(response.headers.get("Access-Control-Allow-Origin"),
+                             "http://phone.local")
+
+    def test_error_body_does_not_disclose_internal_detail(self):
+        def boom(text):
+            raise RuntimeError("secret fixture string XYZ")
+
+        port = self._start(on_command=boom)
+        code, payload = self._request("POST", port, "/command", {"text": "hi"})
+        self.assertEqual(code, 500)
+        self.assertNotIn("XYZ", json.dumps(payload))
+
+    def test_voice_error_uses_status_500_and_no_internal_detail(self):
+        def boom(_path):
+            raise RuntimeError("secret inner fixture XYZ")
+
+        port = self._start(on_voice=boom)
+        code, payload = self._request("POST", port, "/voice",
+                                      raw_body=b"RIFF" + b"\x00" * 64)
+        self.assertEqual(code, 500)
+        self.assertFalse(payload.get("ok", True))
+        self.assertNotIn("XYZ", json.dumps(payload))
+        self.assertNotIn("boom", json.dumps(payload))
+
+    def test_rate_limit_blocks_rapid_commands(self):
+        config = {"rate_limit_per_minute": 4}
+        port = self._start(
+            on_command=lambda text: self._future_response("ok"),
+            config=config,
+        )
+        codes = []
+        for _ in range(8):
+            code, _ = self._request("POST", port, "/command", {"text": "hi"})
+            codes.append(code)
+        self.assertIn(200, codes)
+        self.assertIn(429, codes)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,28 @@
 import re
 
-from AI.ollama_client import OllamaClient
+from AI.ollama_client import (
+    CONNECTION_ERROR_MESSAGE,
+    GENERIC_ERROR_MESSAGE,
+    GENERIC_ERROR_PREFIX,
+    OllamaClient,
+    TIMEOUT_MESSAGE,
+)
 from Config.config import Config
 from Memory.memory_engine import MemoryEngine
+
+_UNAVAILABLE_RESPONSE = "I couldn't come up with an answer right now."
+
+_OFFLINE_RESPONSES = frozenset({
+    CONNECTION_ERROR_MESSAGE,
+    TIMEOUT_MESSAGE,
+    GENERIC_ERROR_MESSAGE,
+    _UNAVAILABLE_RESPONSE,
+} | {m.lower() for m in (
+    CONNECTION_ERROR_MESSAGE,
+    TIMEOUT_MESSAGE,
+    GENERIC_ERROR_MESSAGE,
+    _UNAVAILABLE_RESPONSE,
+)})
 
 
 class AIEngine:
@@ -26,9 +46,7 @@ class AIEngine:
 
         raw = self.client.ask(question, history=history, system=system)
 
-        answer = self.clean_response(raw) or (
-            "I couldn't come up with an answer right now."
-        )
+        answer = self.clean_response(raw) or _UNAVAILABLE_RESPONSE
 
         if not self._is_offline_message(answer):
             self.memory.add_context("user", question)
@@ -80,8 +98,19 @@ class AIEngine:
 
     @staticmethod
     def _is_offline_message(answer):
-        lowered = answer.lower()
-        return "ollama" in lowered and "running" in lowered
+        """Classify assistant output that must never reach memory (B1).
+
+        Four sources: connection, timeout, generic error (any internal
+        detail), and the empty-response fallback. Exact-match for the
+        stable messages so legitimate answers mentioning Ollama survive;
+        prefix-match only for the generic error line.
+        """
+        lowered = answer.strip().lower()
+        if not lowered:
+            return True
+        if lowered in _OFFLINE_RESPONSES:
+            return True
+        return lowered.startswith(GENERIC_ERROR_PREFIX.lower())
 
     def clean_response(self, text):
         if not text:

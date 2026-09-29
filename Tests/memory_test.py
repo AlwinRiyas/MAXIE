@@ -18,6 +18,10 @@ class MemoryTestBase(unittest.TestCase):
                 os.remove(name)
             except OSError:
                 pass
+        try:
+            os.remove(os.path.join(self.tmp, "memory.json"))
+        except OSError:
+            pass
         os.rmdir(self.tmp)
 
 
@@ -53,6 +57,15 @@ class MemoryDatabaseTest(MemoryTestBase):
         self.assertEqual(results[0]["value"], "cybersecurity")
         db.close()
 
+    def test_search_escapes_like_metacharacters(self):
+        """TD-18: '%' and '_' in a query are literal, not wildcards."""
+        db = MemoryDatabase(self.db_path)
+        db.save("progress", "50% complete")
+        db.save("plain", "hello")
+        self.assertEqual(len(db.search("%")), 1, "only literal % should match")
+        self.assertEqual(len(db.search("_")), 0, "_ must not be a wildcard")
+        db.close()
+
     def test_context_turns(self):
         db = MemoryDatabase(self.db_path)
         for i in range(5):
@@ -60,6 +73,56 @@ class MemoryDatabaseTest(MemoryTestBase):
         self.assertEqual(len(db.get_context(max_turns=2)), 2)
         db.clear_context()
         self.assertEqual(db.get_context(), [])
+        db.close()
+
+    def test_context_zero_turns_returns_nothing(self):
+        """TD-11: max_turns=0 must not return the entire table."""
+        db = MemoryDatabase(self.db_path)
+        for i in range(5):
+            db.add_context("user", f"msg {i}")
+        self.assertEqual(db.get_context(max_turns=0), [])
+        db.close()
+
+    def test_context_never_grows_past_cap(self):
+        """TD-11: the conversation table is bounded by a retention sweep."""
+        db = MemoryDatabase(self.db_path)
+        db._conversation_cap = 3
+        for i in range(10):
+            db.add_context("user", f"msg {i}")
+        remaining = db.get_context()
+        self.assertEqual(len(remaining), 3)
+        self.assertEqual(remaining[-1][1], "msg 9", "keep the newest rows")
+        db.close()
+
+    def test_migrate_json_bool_entries_store_value_not_True(self):
+        """TD-12: boolean legacy entries keep their text, not 'True'."""
+        db = MemoryDatabase(self.db_path)
+        legacy = os.path.join(self.tmp, "memory.json")
+        with open(legacy, "w", encoding="utf-8") as f:
+            import json
+
+            json.dump({"remember that I love tea": True}, f)
+
+        migrated = db.migrate_json(legacy)
+        self.assertEqual(migrated, 1)
+        self.assertNotEqual(db.recall("remember that I love tea"), "True")
+
+        # Second run: the migration marker makes it one-shot (TD-12).
+        db2 = MemoryDatabase(self.db_path)
+        self.assertEqual(db2.migrate_json(legacy), 0)
+        db.close()
+        db2.close()
+
+    def test_update_preserves_kind(self):
+        """TD-40: updating a note must not silently rename it to a fact."""
+        db = MemoryDatabase(self.db_path)
+        db.save("todo", "buy milk", kind="note")
+        db.update("todo", "buy oat milk")
+        row = db._conn.execute(
+            "SELECT value, kind FROM memory WHERE key = ?", ("todo",)
+        ).fetchone()
+        self.assertEqual(row["value"], "buy oat milk")
+        self.assertEqual(row["kind"], "note")
         db.close()
 
 
@@ -86,6 +149,30 @@ class MemoryEngineTest(MemoryTestBase):
         values = [m["value"] for m in engine.all()]
         self.assertTrue(any("cybersecurity" in v for v in values))
         engine.close()
+
+
+class MemoryRecallQualityTest(MemoryTestBase):
+    """TD-19: recall must not produce confident wrong answers."""
+
+    def test_stopword_only_query_returns_none(self):
+        db = MemoryDatabase(self.db_path)
+        db.save("college", "Loyola Institute of Technology")
+        result = db.any_recall("tell me about the the")
+        self.assertIsNone(
+            result,
+            "a query with only stopwords must not recall a memory",
+        )
+
+    def test_word_boundary_prevents_substring_mismatch(self):
+        db = MemoryDatabase(self.db_path)
+        db.save("brand", "Coca Cola sells cola")
+        db.save("notes", "educational catalog for art")
+        self.assertIsNotNone(db.any_recall("cola"))
+        # "cat" is a substring of "catalog" but not a standalone word.
+        self.assertIsNone(
+            db.any_recall("cat"),
+            "word-boundary matching must not match 'cat' inside 'catalog'",
+        )
 
 
 if __name__ == "__main__":

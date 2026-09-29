@@ -183,5 +183,26 @@ class StreamCleanupTest(unittest.TestCase):
         fake_stream.close.assert_called_once()
 
 
+class NoiseFloorResetTest(unittest.TestCase):
+    """TD-05: every session re-calibrates the ambient noise floor."""
+
+    def test_record_calls_reset_noise_before_listening(self):
+        recorder = _make_recorder()
+        # No speech found so record() returns None but still owns the session.
+        recorder._listen_loop = mock.MagicMock(return_value=None)
+
+        with mock.patch("Voice.audio_recorder.AudioManager.is_available",
+                        return_value=True), \
+                mock.patch.dict(sys.modules, {"sounddevice": mock.MagicMock()}):
+            sd = sys.modules["sounddevice"]
+            sd.InputStream.return_value = mock.MagicMock()
+            recorder.audio_manager.get_best_microphone.return_value = 0
+
+            result = recorder.record("/tmp/maxie-test.wav")
+
+        self.assertIsNone(result)
+        recorder.vad.reset_noise.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

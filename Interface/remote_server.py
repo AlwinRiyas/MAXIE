@@ -7,25 +7,57 @@ Security model (see AGENTS.md):
   token in the config; otherwise construction fails closed.
 - Every endpoint requires ``X-MAXIE-Token: <token>`` (or
   ``Authorization: Bearer <token>``) when a token is configured.
+- Request bodies are size-capped before they are read (``max_voice_bytes``
+  for ``/voice``, ``max_command_bytes`` for ``/command``).
+- CORS is deny-by-default: ``Access-Control-Allow-Origin`` is emitted only
+  for origins explicitly allowlisted in ``remote_server.allowed_origins``.
+- Token comparison is constant-time (``hmac.compare_digest``).
+- Remote commands are rate-limited per client and, when enabled, appended
+  to an audit log.
 
 Standard library only (``http.server``) — no Flask/requests needed.
 """
 
+import hmac
 import json
+import os
+import tempfile
 import threading
+import time
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from Logs.logger import Logger
 
-LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", ""}
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 DEFAULT_TIMEOUT = 20  # seconds to wait for the conversation loop
+
+
+class _TokenBucket:
+    """Minimal rate limiter: ``capacity`` tokens, refilled at ``rate``/second."""
+
+    def __init__(self, capacity, rate):
+        self.capacity = float(capacity)
+        self.rate = float(rate)
+        self._tokens = self.capacity
+        self._updated = time.monotonic()
+
+    def try_take(self):
+        now = time.monotonic()
+        elapsed = now - self._updated
+        self._tokens = min(self.capacity, self._tokens + elapsed * self.rate)
+        self._updated = now
+        if self._tokens >= 1.0:
+            self._tokens -= 1.0
+            return True
+        return False
 
 
 class RemoteServer:
     """Threaded HTTP server bridging phone/CLI text -> ConversationEngine."""
 
     def __init__(self, host="127.0.0.1", port=8778, token="", on_command=None,
-                 timeout=DEFAULT_TIMEOUT, on_voice=None):
+                 timeout=DEFAULT_TIMEOUT, on_voice=None, config=None):
         self.host = host or "127.0.0.1"
         self.port = int(port)
         self.token = (token or "").strip()
@@ -33,6 +65,18 @@ class RemoteServer:
         self.on_voice = on_voice
         self.timeout = timeout
         self.logger = Logger.instance()
+
+        self._config = config or {}
+        self.max_voice_bytes = int(
+            self._config.get("max_voice_bytes", 10 * 1024 * 1024)
+        )
+        self.max_command_bytes = int(
+            self._config.get("max_command_bytes", 64 * 1024)
+        )
+        self.allowed_origins = {
+            str(o).rstrip("/") for o in self._config.get("allowed_origins", [])
+        }
+        self.audit_log = bool(self._config.get("audit_log", False))
 
         if self.host not in LOOPBACK_HOSTS and not self.token:
             # Fail closed: never expose an unauthenticated LAN service.
@@ -44,6 +88,12 @@ class RemoteServer:
 
         self._server = None
         self._thread = None
+        self._lock = threading.Lock()
+        self._buckets = {}
+        self._buckets_lock = threading.Lock()
+        rate = float(self._config.get("rate_limit_per_minute", 60))
+        self._bucket_capacity = max(1.0, rate)
+        self._bucket_rate = max(0.0, rate) / 60.0
 
     # ----------------------------------------------------------
     # Auth
@@ -58,74 +108,111 @@ class RemoteServer:
             authorization = headers.get("Authorization", "")
             if authorization.lower().startswith("bearer "):
                 supplied = authorization[7:]
-        return supplied.strip() == self.token
+        supplied = supplied.strip()
+        if not supplied:
+            return False
+        return hmac.compare_digest(supplied.encode("utf-8"),
+                                   self.token.encode("utf-8"))
+
+    def _bucket_for(self, client_address):
+        with self._buckets_lock:
+            bucket = self._buckets.get(client_address)
+            if bucket is None:
+                bucket = _TokenBucket(self._bucket_capacity, self._bucket_rate)
+                self._buckets[client_address] = bucket
+            return bucket
+
+    def _audit(self, client_address, method, path, outcome):
+        if not self.audit_log:
+            return
+        try:
+            entry = json.dumps({
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "client": client_address,
+                "method": method,
+                "path": path,
+                "outcome": outcome,
+            })
+            self.logger.info("REMOTE_AUDIT " + entry)
+        except Exception:  # noqa: BLE001 - audit must never break the request
+            pass
 
     # ----------------------------------------------------------
     # Command dispatch -> conversation loop
     # ----------------------------------------------------------
 
     def _dispatch(self, text):
+        """Returns a (status_code, payload) pair, never raises."""
         if not self.on_command:
-            return "MAXIE is not listening for remote commands."
+            return 503, {
+                "ok": False, "error": "MAXIE is not listening for remote commands."
+            }
 
         try:
             future = self.on_command(text)
-        except Exception as error:  # defensive: never crash the server
-            self.logger.error(f"Remote command enqueue failed: {error}")
-            return f"Command failed: {error}"
+        except Exception:  # defensive: never crash the server
+            self.logger.error("Remote command enqueue failed")
+            return 500, {"ok": False, "error": "Command could not be started."}
 
         if future is None:
-            return ""
+            return 200, {"ok": True, "response": ""}
 
         # A Future-like object (conversation.submit_text contract).
         if hasattr(future, "result"):
             try:
-                return future.result(timeout=self.timeout) or ""
+                return 200, {"ok": True, "response": future.result(
+                    timeout=self.timeout) or ""}
             except Exception as error:
-                self.logger.error(f"Remote command timed out/failed: {error}")
-                return "MAXIE took too long to respond. Please try again."
+                self.logger.error(f"Remote command failed/timed out: {error}")
+                return 200, {
+                    "ok": True,
+                    "response": "MAXIE took too long to respond. Please try again.",
+                }
 
-        return str(future)
+        return 200, {"ok": True, "response": str(future)}
 
     # ----------------------------------------------------------
-    # Lifecycle
+    # Lifecycle (thread-safe; TD-24)
     # ----------------------------------------------------------
 
     def start(self):
-        if self._server is not None:
+        with self._lock:
+            if self._server is not None:
+                return True
+
+            handler = self._build_handler()
+            try:
+                self._server = ThreadingHTTPServer((self.host, self.port), handler)
+            except OSError as error:
+                self.logger.error(f"Remote server bind failed: {error}")
+                self._server = None
+                return False
+
+            self._server.daemon_threads = True
+            self._thread = threading.Thread(
+                target=self._server.serve_forever, kwargs={"poll_interval": 0.2},
+                daemon=True, name="MAXIE-Remote",
+            )
+            self._thread.start()
+            self.logger.info(
+                f"Remote server listening on http://{self.host}:{self.port}"
+            )
             return True
 
-        handler = self._build_handler()
-        try:
-            self._server = ThreadingHTTPServer((self.host, self.port), handler)
-        except OSError as error:
-            self.logger.error(f"Remote server bind failed: {error}")
-            print(f"⚠️ Remote server couldn't start: {error}")
-            self._server = None
-            return False
-
-        self._server.daemon_threads = True
-        self._thread = threading.Thread(
-            target=self._server.serve_forever, kwargs={"poll_interval": 0.2},
-            daemon=True, name="MAXIE-Remote",
-        )
-        self._thread.start()
-        self.logger.info(
-            f"Remote server listening on http://{self.host}:{self.port}"
-        )
-        return True
-
     def stop(self):
-        if self._server is None:
-            return
-        try:
-            self._server.shutdown()
-            self._server.server_close()
-        except Exception as error:
-            self.logger.error(f"Remote server stop error: {error}")
-        finally:
+        with self._lock:
+            server, thread = self._server, self._thread
             self._server = None
             self._thread = None
+        if server is None:
+            return
+        try:
+            server.shutdown()
+            server.server_close()
+        except Exception:
+            self.logger.error("Remote server stop error")
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=5)
 
     @property
     def running(self):
@@ -139,7 +226,8 @@ class RemoteServer:
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "MAXIE-Remote/1.0"
+            server_version = "MAXIE-Remote/2.0"
+            protocol_version = "HTTP/1.1"
 
             # ---- helpers -------------------------------------------------
             def _send_json(self, code, payload):
@@ -160,8 +248,18 @@ class RemoteServer:
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _origin_allowed(self):
+                origin = self.headers.get("Origin")
+                if not origin:
+                    return True  # no cross-origin intent
+                return origin.rstrip("/") in outer.allowed_origins
+
             def _send_cors(self):
-                self.send_header("Access-Control-Allow-Origin", "*")
+                if self._origin_allowed():
+                    origin = self.headers.get("Origin")
+                    if origin:
+                        self.send_header("Access-Control-Allow-Origin", origin)
+                        self.send_header("Vary", "Origin")
                 self.send_header("Access-Control-Allow-Headers",
                                  "Content-Type, Authorization, X-MAXIE-Token")
                 self.send_header("Access-Control-Allow-Methods",
@@ -170,8 +268,38 @@ class RemoteServer:
             def _check_auth(self):
                 if outer._authorized(self.headers):
                     return True
+                outer._audit(self.client_address[0], self.command, self.path, 401)
                 self._send_json(401, {"ok": False, "error": "Invalid or missing token."})
                 return False
+
+            def _too_large(self, cap):
+                length = self.headers.get("Content-Length", "0")
+                try:
+                    actual = int(length)
+                except ValueError:
+                    actual = 0
+                if actual < 0 or actual > cap:
+                    outer._audit(self.client_address[0], self.command, self.path, 413)
+                    self._send_json(413, {
+                        "ok": False,
+                        "error": f"Request body exceeds the {cap}-byte limit.",
+                    })
+                    return True
+                return False
+
+            def _read_capped(self, cap):
+                # Read at most `cap` bytes total; a lying Content-Length is
+                # re-read incrementally so it cannot stream forever.
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                remaining = min(length, cap)
+                chunks = []
+                while remaining > 0:
+                    chunk = self.rfile.read(min(remaining, 16384))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                return b"".join(chunks)
 
             def log_message(self, fmt, *args):  # route to MAXIE logger
                 outer.logger.debug("Remote: " + (fmt % args))
@@ -184,8 +312,6 @@ class RemoteServer:
 
             def do_GET(self):
                 if self.path == "/ui":
-                    # Page shell is public; every command it sends still
-                    # carries the token header and is checked there.
                     self._send_text(200, outer._load_ui_html(), "text/html; charset=utf-8")
                     return
 
@@ -217,6 +343,15 @@ class RemoteServer:
                 if not self._check_auth():
                     return
 
+                bucket = outer._bucket_for(self.client_address[0])
+                if not bucket.try_take():
+                    outer._audit(self.client_address[0], self.command, self.path, 429)
+                    self._send_json(429, {
+                        "ok": False,
+                        "error": "Too many requests. Please wait and try again.",
+                    })
+                    return
+
                 if self.path == "/command":
                     self._handle_command()
                     return
@@ -229,13 +364,10 @@ class RemoteServer:
 
             # ---- /command ------------------------------------------------
             def _handle_command(self):
+                if self._too_large(outer.max_command_bytes):
+                    return
 
-                try:
-                    length = int(self.headers.get("Content-Length", 0) or 0)
-                except ValueError:
-                    length = 0
-
-                raw = self.rfile.read(length) if length > 0 else b""
+                raw = self._read_capped(outer.max_command_bytes)
                 text = ""
                 if raw:
                     try:
@@ -249,11 +381,13 @@ class RemoteServer:
 
                 text = text.strip()
                 if not text:
+                    outer._audit(self.client_address[0], self.command, self.path, 400)
                     self._send_json(400, {"ok": False, "error": "Empty command."})
                     return
 
-                response = outer._dispatch(text)
-                self._send_json(200, {"ok": True, "response": response})
+                code, payload = outer._dispatch(text)
+                payload.setdefault("ok", code < 400)
+                self._send_json(code, payload)
 
             # ---- /voice (phone sends a WAV) -----------------------------
             def _handle_voice(self):
@@ -264,24 +398,17 @@ class RemoteServer:
                     })
                     return
 
-                try:
-                    length = int(self.headers.get("Content-Length", 0) or 0)
-                except ValueError:
-                    length = 0
-                if length <= 0:
-                    self._send_json(400, {"ok": False, "error": "Empty audio."})
+                if self._too_large(outer.max_voice_bytes):
                     return
 
-                audio = self.rfile.read(length)
+                audio = self._read_capped(outer.max_voice_bytes)
                 if not audio.startswith(b"RIFF"):
+                    outer._audit(self.client_address[0], self.command, self.path, 400)
                     self._send_json(400, {
                         "ok": False,
                         "error": "Expected a WAV (RIFF) payload.",
                     })
                     return
-
-                import os
-                import tempfile
 
                 result = {"error": "Voice processing failed."}
                 handle = tempfile.NamedTemporaryFile(
@@ -291,20 +418,23 @@ class RemoteServer:
                     handle.write(audio)
                     handle.close()
                     result = outer.on_voice(handle.name)
-                except Exception as error:
-                    outer.logger.error(f"Voice dispatch failed: {error}")
-                    result = {"error": str(error)}
+                except Exception:
+                    outer.logger.error("Voice dispatch failed")
+                    result = {"error": "Voice processing failed."}
                 finally:
                     try:
                         os.unlink(handle.name)
                     except OSError:
                         pass
 
-                if isinstance(result, dict):
+                if isinstance(result, dict) and result.get("error"):
+                    outer._audit(self.client_address[0], self.command, self.path, 500)
+                    self._send_json(500, {"ok": False, **result})
+                elif isinstance(result, dict):
                     payload = {"ok": True, **result}
+                    self._send_json(200, payload)
                 else:
-                    payload = {"ok": True, "response": str(result or "")}
-                self._send_json(200, payload)
+                    self._send_json(200, {"ok": True, "response": str(result or "")})
 
         return Handler
 
@@ -317,8 +447,6 @@ class RemoteServer:
     def _load_ui_html(self):
         if RemoteServer._ui_cache:
             return RemoteServer._ui_cache
-        import os
-
         here = os.path.dirname(os.path.abspath(__file__))
         path = os.path.join(here, "mobile_ui.html")
         try:

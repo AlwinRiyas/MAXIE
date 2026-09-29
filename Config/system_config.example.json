@@ -15,6 +15,9 @@
     "num_ctx": 2048,
     "context_turns": 6
   },
+  "memory": {
+    "conversation_cap": 500
+  },
   "weather": {
     "city": "Chennai",
     "latitude": null,
@@ -24,7 +27,12 @@
     "enabled": false,
     "host": "127.0.0.1",
     "port": 8778,
-    "token": ""
+    "token": "",
+    "max_voice_bytes": 10485760,
+    "max_command_bytes": 65536,
+    "allowed_origins": [],
+    "rate_limit_per_minute": 60,
+    "audit_log": false
   },
   "allow_local_power_control": false
 }

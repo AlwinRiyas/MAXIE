@@ -16,6 +16,8 @@
   "whisper_device": "cpu",
   "whisper_compute_type": "int8",
   "whisper_language": "en",
+  "whisper_retry_seconds": 60,
+  "silero_retry_seconds": 60,
   "tts_engine": "auto",
   "piper_voice": "en_US-lessac-medium",
   "edge_voice": "en-US-JennyNeural",
@@ -23,5 +25,6 @@
   "echo_cooldown_seconds": 0.45,
   "weak_speech_gain": 4.0,
   "weak_rms_threshold": 0.005,
-  "barge_in_rms_threshold": 0.003
+  "barge_in_rms_threshold": 0.003,
+  "vad_noise_ratio": 1.8
 }

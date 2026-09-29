@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import shutil
@@ -37,6 +38,9 @@ class Config:
             "num_ctx": 2048,
             "context_turns": 6,
         },
+        "memory": {
+            "conversation_cap": 500,
+        },
         "weather": {
             "city": "Chennai",
             "latitude": None,
@@ -47,6 +51,11 @@ class Config:
             "host": "127.0.0.1",
             "port": 8778,
             "token": "",
+            "max_voice_bytes": 10485760,
+            "max_command_bytes": 65536,
+            "allowed_origins": [],
+            "rate_limit_per_minute": 60,
+            "audit_log": False,
         },
         "allow_local_power_control": False,
     }
@@ -75,14 +84,17 @@ class Config:
         "whisper_device": "cpu",
         "whisper_compute_type": "int8",
         "whisper_language": "en",
+        "whisper_retry_seconds": 60,  # backoff before retrying a failed load
+        "silero_retry_seconds": 60,   # backoff before retrying a failed load
         "tts_engine": "auto",  # auto | piper | edge | sapi | pyttsx | espeak
         "piper_voice": "en_US-lessac-medium",  # offline neural model name
         "edge_voice": "en-US-JennyNeural",     # online Microsoft voice
         "tts_synth_timeout": 60,  # hard limit on synthesis, seconds
         "echo_cooldown_seconds": 0.45,
-        "weak_speech_gain": 4.0,
+"weak_speech_gain": 4.0,
         "weak_rms_threshold": 0.005,
         "barge_in_rms_threshold": 0.003,
+        "vad_noise_ratio": 1.8,
     }
 
     FILES = {
@@ -145,17 +157,41 @@ class Config:
 
     @classmethod
     def _load_file(cls, path, defaults):
+        # TD-09: reading configuration must never write to disk. The only
+        # write path is "file does not exist" (create once with defaults).
+        # A parse failure is backed up and logged, never silently wiped.
+        defaults = copy.deepcopy(defaults)
+
+        if not os.path.exists(path):
+            cls._save_file(path, defaults)
+            return defaults
+
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            if not isinstance(data, dict):
-                data = {}
         except (OSError, ValueError):
+            try:
+                backup = path + ".bak"
+                shutil.copy2(path, backup)
+            except Exception:
+                pass
+            try:
+                import sys
+
+                print(
+                    f"[Config] WARNING: {path} is malformed; backed up to "
+                    f"{path}.bak and defaults restored.",
+                    file=sys.stderr,
+                )
+            except Exception:
+                pass
+            cls._save_file(path, defaults)
+            return defaults
+
+        if not isinstance(data, dict):
             data = {}
 
-        merged = cls._deep_merge(dict(defaults), data)
-        cls._save_file(path, merged)
-        return merged
+        return cls._deep_merge(defaults, data)
 
     @classmethod
     def _save_file(cls, path, data):
@@ -243,6 +279,12 @@ class Config:
         cls.load()
         sys = cls.data["system"]
         return sys.get("ai", dict(cls.DEFAULT_SYSTEM["ai"]))
+
+    @classmethod
+    def memory_config(cls):
+        cls.load()
+        sys = cls.data["system"]
+        return sys.get("memory", dict(cls.DEFAULT_SYSTEM["memory"]))
 
     @classmethod
     def remote_config(cls):

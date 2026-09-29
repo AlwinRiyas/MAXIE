@@ -1,4 +1,5 @@
 import logging
+import time
 
 from Config.config import Config
 
@@ -23,6 +24,13 @@ class Transcriber:
 
         self.model = None
         self._loaded = False
+        self._last_load_attempt = 0.0
+        self._retry_seconds = float(cfg.get("whisper_retry_seconds", 60))
+
+    @property
+    def available(self):
+        """A real property: latched TRUE only on successful load (TD-06)."""
+        return self._loaded and self.model is not None
 
     @staticmethod
     def is_available():
@@ -34,9 +42,12 @@ class Transcriber:
             return False
 
     def _ensure_model(self):
-        if self._loaded:
+        if self.available:
             return
-        self._loaded = True
+        now = time.monotonic()
+        if now - self._last_load_attempt < self._retry_seconds:
+            return
+        self._last_load_attempt = now
         try:
             from faster_whisper import WhisperModel
 
@@ -46,9 +57,11 @@ class Transcriber:
                 device=self.device,
                 compute_type=self.compute_type,
             )
+            self._loaded = True  # only latch on success (TD-06)
             print("Whisper Ready.")
         except Exception as error:
             self.model = None
+            self._loaded = False
             self.log.error(f"Whisper unavailable: {error}")
 
     def transcribe(self, filename):

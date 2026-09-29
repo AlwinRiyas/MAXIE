@@ -1,4 +1,5 @@
 import logging
+import time
 from collections import deque
 
 import numpy as np
@@ -38,10 +39,17 @@ class VADEngine:
 
         self.model = None
         self._silero_loaded = False
+        self._last_silero_attempt = 0.0
+        self._silero_retry_seconds = float(
+            Config.audio().get("silero_retry_seconds", 60)
+        )
         self._noise_floor = None
         self._energy_threshold = float(
             Config.audio().get("barge_in_rms_threshold", 0.003)
         )
+        # TD-05: the adaptive gate is *calibrated* — a bounded SNR ratio, not
+        # a fixed 3x ambient that real rooms (1.5-2x) can never satisfy.
+        self._noise_ratio = float(Config.audio().get("vad_noise_ratio", 1.8))
         self._recent_probs = deque(maxlen=4)
 
     # ----------------------------------------------------------
@@ -51,15 +59,20 @@ class VADEngine:
     def _ensure_silero(self):
         if self._silero_loaded:
             return
+        now = time.monotonic()
+        if now - self._last_silero_attempt < self._silero_retry_seconds:
+            return
+        self._last_silero_attempt = now
         try:
             from silero_vad import load_silero_vad
 
             self.model = load_silero_vad()
+            self._silero_loaded = True  # only latch on success (TD-06)
             self.log.info("Silero VAD loaded.")
         except Exception as error:
             self.model = None
+            self._silero_loaded = False
             self.log.warning(f"Silero unavailable (falling back to energy VAD): {error}")
-        self._silero_loaded = True
 
     @property
     def has_ml(self):
@@ -106,7 +119,12 @@ class VADEngine:
         if self.noise_floor is None:
             return rms > self._energy_threshold
 
-        return rms > max(self._energy_threshold, self.noise_floor * 3.0)
+        # A real room's speech hovers ~1.5-2x its ambient noise floor. The
+        # gate is the *larger* of the absolute calibrated floor and a bounded
+        # adaptive floor (ambient * ratio), so loud rooms adapt while still
+        # requiring a genuine SNR step above ambient.
+        adaptive_floor = self.noise_floor * self._noise_ratio
+        return rms > max(self._energy_threshold, adaptive_floor)
 
     @property
     def noise_floor(self):

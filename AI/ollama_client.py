@@ -1,7 +1,18 @@
+import logging
 import requests
 
 from Config.config import Config
 from AI.prompts import SYSTEM_PROMPT
+
+logger = logging.getLogger(__name__)
+
+CONNECTION_ERROR_MESSAGE = (
+    "I can't reach Ollama right now. "
+    "Please make sure Ollama is running on this machine."
+)
+TIMEOUT_MESSAGE = "Ollama took too long to respond. Please try again."
+GENERIC_ERROR_MESSAGE = "I hit an error talking to the model. Try again in a moment."
+GENERIC_ERROR_PREFIX = "I hit an error talking to the model"
 
 
 class OllamaClient:
@@ -64,14 +75,14 @@ class OllamaClient:
             )
             return answer.strip()
         except requests.exceptions.ConnectionError:
-            return (
-                "I can't reach Ollama right now. "
-                "Please make sure Ollama is running on this machine."
-            )
+            logger.warning("Ollama connection failed (b1 classified offline)")
+            return CONNECTION_ERROR_MESSAGE
         except requests.exceptions.Timeout:
-            return "Ollama took too long to respond. Please try again."
-        except Exception as error:
-            return f"I hit an error talking to the model: {error}"
+            logger.warning("Ollama request timed out after %ss", self.timeout)
+            return TIMEOUT_MESSAGE
+        except Exception as error:  # noqa: BLE001 - surface as generic, log detail
+            logger.warning("Ollama request error: %s", error)
+            return GENERIC_ERROR_MESSAGE
 
     def ask_generate(self, prompt):
         payload = {
