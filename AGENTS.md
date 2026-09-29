@@ -30,7 +30,8 @@ phone access via HTTP endpoint). Written in Python.
 main.py / run.py
  └── Core/core_manager.Maxie
      ├── VoiceEngine            TTS (piper neural offline -> edge online -> SAPI/espeak fallback)
-     ├── VoiceManager           state enum + listen() (NOT a validated state machine)
+     ├── VoiceManager           live state facade over VoiceStateMachine
+     ├── VoiceStateMachine      8 states, validated transitions, atomic capture↔playback reservations
      ├── AudioManager           microphone listing/selection (config-aware)
      ├── AudioRecorder          streaming VAD recorder (Silero, energy fallback)
      ├── SpeechPipeline         recorder -> Transcriber
@@ -46,9 +47,10 @@ main.py / run.py
      └── RemoteServer           HTTP endpoint for phone/CLI control
 ```
 
-`Core/state_manager.py` and `Core/event_bus.py` are **dead code** with zero
-production references. `Tests/state_test.py` tests the dead state manager, not
-the live one. Do not treat either as the real state/event system.
+`Core/event_bus.py` is **dead code** with zero production references. The old
+`Core/state_manager.py` was **removed 2026-09-29**; `Tests/state_test.py` now
+tests the live `VoiceStateMachine`. Do not treat `event_bus.py` as the real
+event system.
 
 Continuous learning: `BrainRouter._auto_learn()` silently persists
 preference phrases ("i like/love/prefer", "my favorite", "i am
@@ -137,7 +139,7 @@ Read these before changing anything structural. All are at the repo root.
 | `GAP_ANALYSIS.md` | Target architecture vs current, stage by stage |
 | `TECHNICAL_DEBT.md` | 47-item register with `file:line` and severity |
 | `SECURITY_AUDIT.md` | Threat model, 14 findings, remediation order |
-| `TEST_STATUS.md` | 139-test baseline, coverage matrix, hardware status |
+| `TEST_STATUS.md` | 208-test baseline, coverage matrix, hardware status |
 | `OPEN_SOURCE_COMPARISON.md` | Leon / OpenVoiceOS / Rhasspy, what to adopt and reject |
 | `ROADMAP.md` | 19 phases with subphases, in priority order |
 | `DEVELOPMENT_STATUS.md` | Honest current state |
@@ -151,29 +153,31 @@ edit them; the canonical documents are at the root.
 
 Fix in this order; each is `file:line` referenced in `TECHNICAL_DEBT.md`.
 
-- **TD-01** `Voice/voice_engine.py:225-243` — synthesis runs in a `subprocess`
-  never stored on the instance, so `stop()` cannot cancel it. Saying "stop"
-  during synthesis causes MAXIE to **speak more**, into a reopened microphone.
-- **TD-02** `Voice/voice_engine.py:246,282` vs `:408,482,521` — `_speaking` is
-  only cleared on the success path, so one TTS failure stalls every later reply
-  for 40 s, permanently.
-- **TD-03** `Voice/audio_recorder.py:172-176,211-215` — no wall-clock deadline;
-  if capture stops mid-utterance the conversation thread never returns.
-- **TD-04** `Ui/gui.py:185-191` — GUI auto-listen has no capture lock, so MAXIE
-  transcribes its own replies and re-executes mutating commands.
+**CLOSED 2026-09-29 — see `TECHNICAL_DEBT.md` / `TEST_STATUS.md` for the
+commit and test evidence:**
+- **TD-01 / TD-02** TTS cancellation + `_speaking` latch (commit `030c9e2`).
+- **TD-03** recorder wall-clock deadline (commit `7dc99b4`).
+- **TD-04 / TD-15 / TD-32** state machine, atomic capture↔playback
+  reservations, and the GUI auto-listen lock (uncommitted WIP — review and
+  commit before trusting `git status`).
+
+Still open, in priority order:
 - **B1** `AI/ai_engine.py:82-84` — only 1 of 4 Ollama failure strings is
   filtered; the other 3 are persisted as conversation context and re-injected
   forever.
 - **TD-05** `Voice/vad_engine.py:109` — the energy-VAD fallback requires speech
   to be 3x the ambient RMS, which real rooms never satisfy.
-- **TD-08** / SEC-02 — `Config/system_config.json` is git-tracked, so the first
-  real token anyone sets will be published by a routine `git commit -a`.
+- **TD-07** remote server unbounded bodies/threads (SEC-03/04/05/11).
+- **TD-06** STT/VAD one-shot load latch disables the subsystem permanently.
+- **TD-08** / SEC-02 — `Config/*.json` is now gitignored and untracked; the
+  token field is empty today. The next real token must go only into the
+  ignored file, never an example.
 
 ## Working rules for changes
 
 - A bug fix ships with a test that **fails without the fix**. Verify both
   directions before claiming it is done.
-- Never reduce the test count. Baseline is 139 passing, 1 skipped.
+- Never reduce the test count. Baseline is 208 passing, 1 skipped.
 - `python Tests/run_tests.py` and `python -m compileall -q .` must both stay
   clean at the end of every change.
 - Mark hardware-dependent results **HARDWARE UNVERIFIED** until run on the real

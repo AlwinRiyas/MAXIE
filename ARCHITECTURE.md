@@ -55,8 +55,8 @@ run.py
 
 These exist on disk and are **not** on any live code path:
 
-- `Core/state_manager.py` — 6-value `StateManager`, superseded by
-  `Voice.VoiceState`. `Tests/state_test.py` tests *this*, not the live machine.
+- `Core/state_manager.py` — **REMOVED 2026-09-29** (dead 6-value manager).
+  `Tests/state_test.py` now covers `VoiceStateMachine`, the live machine.
 - `Core/event_bus.py` — no subscribers.
 - `Voice/Core/` — empty directory.
 - `Voice/microphone.py`, `Voice/voice_config.py` — unreferenced.
@@ -71,32 +71,34 @@ These exist on disk and are **not** on any live code path:
 
 ### 3.1 State
 
-`Voice/voice_state.py` defines exactly four states:
+`Voice/voice_state.py` + `Voice/voice_state_machine.py` (new 2026-09-29) define
+eight states and a validated transition table:
 
 ```
-IDLE -> LISTENING -> PROCESSING -> SPEAKING -> IDLE
+IDLE -> (WAKING ->) LISTENING -> THINKING -> ACTING -> SPEAKING -> COOLDOWN
+   \                                                          ~> LISTENING (barge-in)
+   all states -> IDLE | ERROR
 ```
 
-There is **no transition table, no guard, and no validation**.
-`VoiceManager.set_state()` exists but is never called; every transition is a
-direct attribute write. `Conversation/conversation_engine.py:178-180` also
-writes the attribute directly.
+`VoiceStateMachine` is the single owner: every `transition()` is checked against
+`VALID_TRANSITIONS` under an `RLock`, and capture/playback are **mutually
+exclusive atomic reservations** (`reserve_capture`/`reserve_playback`). Speech
+is never legal from a capturing state (the STRUCTURAL echo guard — TD-04), and a
+reply is reserved before its thread starts, closing the old check-then-act race.
 
-`VoiceManager.listen()` (`voice_manager.py:29`) enters `PROCESSING` and does not
-return to `IDLE`, so a completed turn leaves the machine parked in
-`PROCESSING` — the GUI then renders "Thinking…" indefinitely.
+`VoiceManager.listen()` leaves the machine in `THINKING` for a real utterance
+(ginger closed), `IDLE` for an empty or refused capture. `ConversationEngine`
+closes every turn with `end_turn()` in a `finally`; `end_turn()` refuses to
+clobber a capture the GUI auto-loop holds.
 
 ### 3.2 Capture
 
 `Voice/audio_recorder.py` opens an `InputStream` and pushes frames onto a
 `queue.Queue`; a worker drains it, sums energy, and feeds `VADEngine`.
 
-- Termination relies **entirely** on `queue.Empty`. There is no wall-clock
-  deadline on the loop (`audio_recorder.py:172-176`, `:211-215`).
-- `speech_wait_timeout` is gated on `speech_started_at is None`, so it only
-  bounds the *pre-speech* wait, never the total utterance.
-- `stream.close()` is skipped when `InputStream()` succeeds but `start()`
-  fails (`audio_recorder.py:110-113`), leaking a handle.
+- A wall-clock deadline (`max_total_seconds`, from `_total_budget`) now bounds
+  the whole loop, including `queue.Empty` iterations (TD-03, commit `7dc99b4`).
+- `stream.close()` runs when `start()` fails (TD-31).
 
 ### 3.3 VAD
 
@@ -120,31 +122,41 @@ one log line. `speech_pipeline.py:14-16` gates on `AudioManager.is_available()`
 
 ### 3.5 Synthesis and cancellation
 
-`Voice/voice_engine.py` runs synthesis in a local `subprocess.run` (`:227`) that
-is **never stored on `self.process`**. `stop()` (`:517-547`) can only terminate
-the *player* process. There is no cancel flag between synthesis (`:234`) and
-playback (`:235`).
+**Updated 2026-09-29 (commit `030c9e2`).** `Voice/voice_engine.py` now runs
+synthesis through `_run_synthesis` with the subprocess handle on
+`self._synth_process` and a `threading.Event` cancel flag (`self._cancel`).
+`stop()` terminates the synthesis process itself, `_play_audio` refuses after a
+cancel, and 10 tests in `Tests/tts_cancel_test.py` cover cancel-during-synthesis,
+the `_speaking` latch, and — for Piper — that a *successful* synthesis actually
+reaches the speaker.
 
-Consequence: a "stop" issued during the 1–5 s synthesis window lets synthesis
-complete, the conversation loop reopens the microphone, and then playback begins
-— MAXIE speaks into an open mic, transcribes itself, and feeds the echo to the
-router.
+Consequence of the old design (for the record): a "stop" issued during the
+1–5 s synthesis window let synthesis complete, the conversation loop reopened
+the microphone, and playback began — MAXIE spoke into an open mic, transcribed
+itself, and fed the echo to the router.
 
-`_speaking` is set at `:246`/`:282` and only cleared at `:408`/`:482`/`:521`,
-all downstream of a *successful* synthesis plus a real player. Any TTS failure
-latches the flag permanently.
+`_speaking` was set at `:246`/`:282` and only cleared downstream of a
+successful synthesis; it is now cleared in a `finally` on every worker path.
+
+**HARDWARE-UNVERIFIED point:** the workers clear `_speaking` when playback is
+*dispatched*, not when the speaker finishes; on real hardware confirm
+`is_speaking()` stays true for the whole audible reply.
 
 ### 3.6 Echo control
 
 The property that makes the console loop safe is structural: the mic is closed
-during TTS (`audio_recorder.py:121-126`). That property holds **only** for the
-single-threaded console path. It is violated by:
+during TTS (`audio_recorder.py:121-126`). **Updated 2026-09-29:** the shared
+`VoiceStateMachine` now enforces capture↔playback exclusion with atomic
+reservations across all three surfaces (console, GUI auto-listen, remote TTS):
+- `VoiceManager.listen()` claims the mic atomically and refuses while speaking;
+- `ConversationEngine._maybe_speak_remote()` atomically reserves the speaker
+  before spawning the reply thread (no check-then-act);
+- `Ui/gui.py` `_auto_loop` shares `_talk_lock` with `_on_talk` and no longer
+  calls tkinter from the worker thread (TD-15), so a second `InputStream` can
+  never be opened on the device.
 
-- `Ui/gui.py:185-191` — `_auto_loop` calls `listen_once()` with no
-  coordination against the concurrent `MAXIE-RemoteTTS` thread.
-- Concurrent TTS — the state attribute is lock-free and written by three
-  threads.
-- The cancellation path in 3.5, where TTS starts *after* the mic reopened.
+Coverage: `Tests/state_test.py`, `Tests/conversation_state_test.py`,
+`Tests/gui_loop_test.py`.
 
 ---
 
@@ -303,9 +315,9 @@ forever in SQLite and pushed to the phone. `Logs/` files are mode `0777`.
 the handler guard (`:20`); there is no `flush()`/`shutdown()`, so a hard exit
 can lose the last line.
 
-`Core/state_manager.py:18-20` prints on every transition. That class is dead,
-but the test suite instantiates it, so `[STATE] …` lines leak into stdout after
-the unittest summary.
+`Core/state_manager.py` was dead and printed `[STATE] …` on every transition;
+it was **removed 2026-09-29** and its tests replaced by `Tests/state_test.py`,
+which now covers the real `VoiceStateMachine`.
 
 ---
 

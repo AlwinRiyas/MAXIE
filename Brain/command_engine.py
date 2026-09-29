@@ -1,124 +1,39 @@
-from Brain.command_parser import CommandParser
-from Brain.intent_detector import IntentDetector
 from Skills.skill_manager import SkillManager
 
 
 class CommandEngine:
+    """Intent-based command dispatcher.
 
-    def __init__(self):
+    ``execute(intent, value, text)`` passes work to the allowlisted
+    SkillManager. Backward-compatible canonical-string calls are also
+    supported via ``execute_text``.
+    """
 
-        self.parser = CommandParser()
-        self.intent = IntentDetector()
-        self.skills = SkillManager()
+    def __init__(self, skill_manager=None):
+        self.skills = skill_manager if skill_manager is not None else SkillManager()
 
-    def normalize(self, command):
+    def execute(self, intent, value="", text=None):
+        return self.skills.execute(intent, value or "", extra=text or value)
+
+    def execute_text(self, command):
+        """Handle a canonical command string like 'time' / 'open brave'."""
+        from Brain.intent_engine import IntentEngine
 
         command = command.lower().strip()
+        intent = IntentEngine().classify(command)
+        value = self._extract(command, intent)
+        return self.execute(intent, value, command)
 
-        # Remove punctuation
-        for char in [".", ",", "!", "?", "'"]:
-            command = command.replace(char, "")
-
-        # Common Whisper variations
-        replacements = {
-            "calculated": "calculator",
-            "calculate": "calculator",
-            "calculater": "calculator",
-            "calclator": "calculator",
-            "braille": "brave",
-            "brave browser": "brave",
-            "the calculator": "calculator",
-            "the brave": "brave",
+    @staticmethod
+    def _extract(command, intent):
+        verbs = {
+            "OPEN_APP": ("open ", "launch ", "start ", "run "),
+            "CLOSE_APP": ("close ", "kill ", "quit ", "exit app "),
+            "SEARCH": ("search for ", "search ", "look up ", "google "),
         }
-
-        for wrong, correct in replacements.items():
-
-            command = command.replace(
-                wrong,
-                correct
-            )
-
-        # Remove conversational prefixes
-        prefixes = [
-            "can you ",
-            "could you ",
-            "would you ",
-            "please ",
-            "i want to ",
-            "i need to ",
-            "help me ",
-            "the ",
-        ]
-
-        for prefix in prefixes:
-
-            if command.startswith(prefix):
-
-                command = command[len(prefix):]
-
-        # Command verbs
-        verbs = [
-            "open ",
-            "launch ",
-            "start ",
-            "run ",
-        ]
-
-        for verb in verbs:
-
-            if command.startswith(verb):
-
-                command = command[len(verb):]
-
-                break
-
+        if intent in verbs:
+            for verb in verbs[intent]:
+                if command.startswith(verb):
+                    return command[len(verb):].strip()
+            return command.strip()
         return command.strip()
-
-    def execute(self, command):
-
-        original = command
-
-        command = self.normalize(command)
-
-        # Direct application aliases
-        aliases = {
-            "calculator": "calculator",
-            "calc": "calculator",
-            "brave": "brave",
-            "notepad": "notepad",
-            "paint": "paint",
-            "android studio": "android studio",
-        }
-
-        if command in aliases:
-
-            return self.skills.execute(
-                "OPEN_APP",
-                aliases[command]
-            )
-
-        # Normal intent detection
-        parsed = self.parser.parse(original)
-
-        intent = self.intent.detect(parsed)
-
-        if intent == "OPEN_APP":
-
-            return self.skills.execute(
-                intent,
-                command
-            )
-
-        elif intent == "SEARCH":
-
-            return "Search System is under development."
-
-        elif intent == "SHUTDOWN":
-
-            return "Shutdown requires confirmation."
-
-        elif intent == "RESTART":
-
-            return "Restart requires confirmation."
-
-        return "Sorry, I don't understand that command."

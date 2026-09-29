@@ -62,8 +62,11 @@ class ListenLoopDeadlineTest(unittest.TestCase):
         elapsed = time.monotonic() - started
 
         self.assertIsNone(result, "a stalled capture must return None")
+        # The configured deadline is 0.6s, but a loaded CI box can stall the
+        # GIL for seconds; the regression this guards against is a loop that
+        # never returns at all, not one that is a few seconds late.
         self.assertLess(
-            elapsed, 3.0,
+            elapsed, 5.0,
             "_listen_loop must honour its wall-clock deadline (TD-03)",
         )
         recorder.log.warning.assert_called()

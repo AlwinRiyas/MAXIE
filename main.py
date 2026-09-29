@@ -1,12 +1,4 @@
-from Core.core_manager import Maxie
+import run  # shared entry point (banner, config, lifecycle)
 
-print("=" * 50)
-print("                MAXIE")
-print("      Personal AI Assistant")
-print("=" * 50)
-
-assistant = Maxie()
-
-assistant.start()
-
-print("\nMAXIE is Ready.")
+if __name__ == "__main__":
+    run.main()

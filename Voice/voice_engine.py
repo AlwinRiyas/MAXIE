@@ -241,7 +241,13 @@ class VoiceEngine:
             if self._cancel.is_set():
                 return
             try:
-                self._speak_piper_synth(text, model, wav, scale, synth_timeout)
+                # Play only when synthesis completed and stop() did not fire.
+                # Dropping this call made Piper synth silently and never
+                # reach the speaker.
+                if self._speak_piper_synth(
+                    text, model, wav, scale, synth_timeout
+                ):
+                    self._play_audio(wav, "wav")
             except Exception as error:
                 self.logger.error(f"Piper TTS failed: {error}")
             finally:

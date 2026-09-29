@@ -1,34 +1,15 @@
-import subprocess
+from Skills.app_launcher import AppLauncher
 
 
 class OpenAppSkill:
+    """Open applications or URLs by name through the cross-platform
+    launcher."""
 
-    APPS = {
-        "calculator": "calc",
-        "calc": "calc",
-        "calculate": "calc",
-
-        "notepad": "notepad",
-
-        "paint": "mspaint",
-
-        "brave": r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
-
-        "android studio": "studio64.exe",
-    }
+    def __init__(self):
+        self.launcher = AppLauncher()
 
     def execute(self, app_name):
-
-        app_name = (
-            app_name.lower()
-            .replace(".", "")
-            .replace(",", "")
-            .strip()
-        )
-
-        if app_name not in self.APPS:
-            return f"I couldn't find {app_name}."
-
-        subprocess.Popen(self.APPS[app_name], shell=True)
-
-        return f"Opening {app_name}."
+        if not app_name or not app_name.strip():
+            return "Please tell me which app to open."
+        ok, message = self.launcher.open(app_name.strip())
+        return message

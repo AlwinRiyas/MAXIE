@@ -5,6 +5,12 @@
 
 Totals: **47 items** — 7 critical, 10 high, 16 medium, 14 low/dead.
 
+**Status update (2026-09-29):** TD-01, TD-02 and TD-03 are **CLOSED** (commits
+`030c9e2`, `7dc99b4`); TD-04, TD-15 and TD-32 are **CLOSED in the live,
+uncommitted state-machine WIP**; TD-31 is partially closed. Test count moved
+from 139 to **208**. The counts below retain the original register numbering —
+closed items are annotated, not renumbered, so line references stay stable.
+
 Severity note: TD-08 was initially rated CRITICAL as "live token committed".
 That was **overstated** — verification showed the `remote_server.token` value in
 the worktree is empty and the HEAD blob is 0 bytes, so nothing leaks today. It
@@ -15,11 +21,21 @@ is downgraded to HIGH as a *prospective* risk. The three CRITICAL voice defects
 
 ## S1 — Critical
 
+**Resolved:** TD-01, TD-02, TD-03 (see `TEST_STATUS.md`). Remaining critical
+items are the remote DoS, capability spreads, and process launch.
+
 ### TD-01 Cancelled TTS keeps synthesising and then plays into an open mic
 `Voice/voice_engine.py:225-243`, `:517-547`
-Synthesis runs in a `subprocess.run` (`:227`) that is never assigned to
-`self.process`; `stop()` can only kill the player. No cancel flag between
+Synthesis ran in a `subprocess.run` (`:227`) that was never assigned to
+`self.process`; `stop()` could only kill the player. No cancel flag between
 `:234` and `:235`.
+
+**Status: CLOSED** (commit `030c9e2`).
+Synthesis now runs through `_run_synthesis` with the handle on
+`self._synth_process`, `_cancel` is an `Event`, `_play_audio` refuses after a
+cancel, and Piper only plays when synthesis completed (the success path was
+briefly dropped and is now covered by a regression test). Covered by 10 tests in
+`Tests/tts_cancel_test.py`.
 *Impact:* user says "stop" during the 1–5 s piper synthesis window; the loop
 reopens the mic; synthesis completes; MAXIE speaks at full volume, transcribes
 itself, and routes the echo. Affects both recommended engines on every platform.
@@ -28,7 +44,10 @@ between synth and play, and check it before `_play_audio`.
 
 ### TD-02 `_speaking` latches `True` on any TTS failure
 `Voice/voice_engine.py:246`, `:282` (set) vs `:408`, `:482`, `:521` (clear)
-All clears are downstream of a successful synthesis plus a real player process.
+All clears were downstream of a successful synthesis plus a real player process.
+
+**Status: CLOSED** (commit `030c9e2`).
+Piper and Edge workers now `finally`-clear `_speaking` on every path.
 *Impact:* a missing piper binary or an offline Edge engine turns every
 subsequent reply into a 40-second stall, forever, with no self-heal.
 *Fix:* `try/finally` around the whole speak path; clear the flag in the handler.
@@ -37,14 +56,30 @@ subsequent reply into a 40-second stall, forever, with no self-heal.
 `Voice/audio_recorder.py:172-176`, `:211-215`
 `total_blocks` only advances on dequeue; there is no wall-clock deadline, and
 `speech_wait_timeout` only bounds the pre-speech wait.
+
+**Status: CLOSED** (commit `7dc99b4`).
+`_listen_loop` now takes a `max_total_seconds` absolute deadline, checked on
+every iteration (including `queue.Empty`), derived from Config via
+`_total_budget`. Covered by 5 tests in `Tests/recorder_deadline_test.py`.
 *Impact:* unplugging a USB headset mid-sentence leaves the conversation thread
 dead permanently; GUI auto-listen repeats it forever.
 *Fix:* absolute deadline derived from `Config`, checked in the loop.
 
 ### TD-04 GUI auto-listen transcribes MAXIE's own speech
 `Ui/gui.py:185-191` vs `Conversation/conversation_engine.py:175-182`
-Speaking is gated during LISTENING; nothing gates *listening* during SPEAKING.
-`_auto_loop` never takes `_talk_lock` (which `_on_talk` does hold).
+Speaking was gated during LISTENING; nothing gated *listening* during SPEAKING.
+`_auto_loop` never took `_talk_lock` (which `_on_talk` does hold).
+
+**Status: CLOSED in the live state machine (uncommitted WIP at this write).**
+`VoiceStateMachine` owns capture and playback as mutually exclusive atomic
+reservations; the old check-then-act `_can_remote_speak` was removed. The GUI's
+`_auto_loop` and `_on_talk` share `_talk_lock`, `_auto_loop` no longer touches
+tkinter from the worker and sleeps between empty listens. Coverage:
+`Tests/state_test.py`, `Tests/gui_loop_test.py`, `Tests/conversation_state_test.py`.
+
+**Remaining watch item:** the Pipper/Edge workers still clear `_speaking` in a
+`finally` while `_play_audio` itself dispatches an async player; the success
+path has a test, but real playback timing must be confirmed on hardware.
 *Impact:* a mutating remote command re-executes itself once per reply, silently,
 scaled by response length. The `echo_cooldown` sleep on another thread cannot
 help.
@@ -142,6 +177,10 @@ actually wire the GUI's 200 ms poll to it.
 `Ui/gui.py:185-191`
 `winfo_exists()` from a worker thread; `continue` with no sleep; no
 `_talk_lock`. Zero test coverage.
+**Status: CLOSED in the live GUI (uncommitted WIP at this write).** The loop
+reads a plain `_alive` flag instead of `root.winfo_exists()`, sleeps 0.3 s
+between empty listens, and shares `_talk_lock` with `_on_talk`. Covered by 11
+tests in `Tests/gui_loop_test.py`.
 *Fix:* sleep 0.2–0.5 s on empty, share the capture lock, drop the tk call from
 the worker.
 
@@ -240,11 +279,20 @@ contradict the "single source of truth" claim in `voice_commands.py:1-7`.
 violating `AGENTS.md`'s own path convention. `Ui/gui.py:150` vs `:185-191` can
 open two `InputStream`s on one device. `audio_recorder.py:110-113` leaks a handle
 whenever `start()` fails.
+**Partially CLOSED:** `audio_recorder.py` now closes the stream when `start()`
+fails (commit `7dc99b4`, covered by `Tests/recorder_deadline_test.py`). The GUI
+double-stream half is closed by the shared-lock work in TD-04. The relative
+`voice.wav` path is **still open**.
 
 ### TD-32 `VoiceState.PROCESSING` latches; the state machine is not a machine
 `Voice/voice_manager.py:29`; `Core/state_manager.py` (dead)
 No transition table, no guard, lock-free attribute written by three threads.
 Any empty listen leaves the GUI showing "Thinking…" forever.
+**Status: CLOSED in the live WIP.** The dead `Core/state_manager.py` was
+removed; `VoiceStateMachine` validates every transition with two-way
+capture/playback exclusion; `ConversationEngine` closes every turn in a
+`finally` with `end_turn()`, which refuses to clobber a live capture. Covered by
+`Tests/state_test.py` and `Tests/conversation_state_test.py`.
 
 ### TD-33 TTS/thread lifetime problems
 `Voice/voice_engine.py:441-448`, `:474-484`, `:414-458`, `:523-524`

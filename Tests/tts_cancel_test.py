@@ -180,6 +180,91 @@ class TtsCancellationTest(unittest.TestCase):
         popen.assert_not_called()
 
 
+class PiperSuccessPlaybackTest(unittest.TestCase):
+    """A successful Piper synthesis must actually reach the speaker.
+
+    The cancellable-synthesis rewrite left `_speak_piper` calling
+    `_speak_piper_synth` and discarding its result, so the WAV was synthesised
+    and immediately unlinked without ever being played. MAXIE went silent on
+    the default engine while every cancellation test still passed, because
+    none of them exercised the success path.
+    """
+
+    def _speak_piper(self, engine, fake, wav="/tmp/maxie-ok.wav"):
+        engine._piper_bin = mock.MagicMock(return_value=["piper"])
+        engine._piper_model = mock.MagicMock(
+            return_value=os.path.join("Config", "tts_models", "fake.onnx")
+        )
+        with mock.patch("os.path.exists", return_value=True), \
+                mock.patch("subprocess.Popen", return_value=fake), \
+                mock.patch("Voice.voice_engine.Config.temp_path",
+                           return_value=wav), \
+                mock.patch("Voice.voice_engine.Config.audio",
+                           return_value={"tts_synth_timeout": 60}):
+            result = engine._speak_piper("a reply the user must hear")
+            for _ in range(200):
+                if not engine.is_speaking():
+                    break
+                time.sleep(0.02)
+        return result
+
+    def test_successful_synthesis_is_played(self):
+        engine = _make_engine()
+        played = []
+        engine._play_audio = lambda path, kind: played.append((path, kind)) or True
+
+        # Exits 0 on its own: the success path.
+        fake = _FakeSynthProcess(exit_delay=0.01, create_output=True)
+
+        self.assertTrue(self._speak_piper(engine, fake))
+        self.assertEqual(
+            played, [("/tmp/maxie-ok.wav", "wav")],
+            "a WAV that was synthesised successfully must be played",
+        )
+        self.assertFalse(
+            fake.terminated or fake.killed,
+            "a synthesis that exited on its own must not be terminated",
+        )
+
+    def test_successful_synthesis_clears_speaking(self):
+        engine = _make_engine()
+        engine._play_audio = mock.MagicMock(return_value=True)
+        fake = _FakeSynthProcess(exit_delay=0.01, create_output=True)
+
+        self._speak_piper(engine, fake)
+        self.assertFalse(
+            engine.is_speaking(),
+            "the speaking flag must clear after playback is dispatched",
+        )
+
+    def test_failed_synthesis_is_not_played(self):
+        engine = _make_engine()
+        engine._play_audio = mock.MagicMock(return_value=True)
+        # Non-zero exit: synthesis produced nothing usable.
+        fake = _FakeSynthProcess(exit_delay=0.01, create_output=True)
+        fake.returncode = 1
+
+        self._speak_piper(engine, fake)
+        engine._play_audio.assert_not_called()
+
+    def test_temporary_wav_is_removed_after_playback(self):
+        engine = _make_engine()
+        engine._play_audio = mock.MagicMock(return_value=True)
+        fake = _FakeSynthProcess(exit_delay=0.01, create_output=True)
+
+        removed = []
+        real_unlink = os.unlink
+        with mock.patch("os.unlink", side_effect=lambda p: (
+            removed.append(p), real_unlink.__call__(p) if os.path.exists(p) else None
+        )[0]):
+            self._speak_piper(engine, fake, wav="/tmp/maxie-ok.wav")
+
+        self.assertEqual(
+            removed, ["/tmp/maxie-ok.wav"],
+            "the temp WAV must be cleaned up after playback",
+        )
+
+
 class TtsSpeakingLatchTest(unittest.TestCase):
     """TD-02: `_speaking` must clear on every failure path.
 

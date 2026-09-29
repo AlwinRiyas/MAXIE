@@ -61,13 +61,13 @@ Full detail: `ARCHITECTURE.md`. Gaps: `GAP_ANALYSIS.md`. Debt: `TECHNICAL_DEBT.m
 | Local LLM (Ollama) | **UNVERIFIED** | service started locally and `llama3.2:3b` pulled, but **no test exercises the real client** |
 | Memory persistence | **PARTIAL** | survives restart, but unbounded, lossy under concurrency, injectable |
 | TTS engine abstraction | **DONE** | 4 engines behind a priority list |
-| TTS cancellation | **MISSING** | **CRITICAL** — `stop()` during synthesis produces *more* speech (`voice_engine.py:225-243`) |
+| TTS cancellation | **DONE 2026-09-29** | **TD-01/TD-02 closed** (`030c9e2`); synth handle on instance, cancel `Event`, `_speaking` `finally`-cleared; success playback back to the speaker |
 | Streaming STT | **MISSING** | one-shot blocking `transcribe()` on a finished WAV |
 | VAD fallback | **MISSING** | 3× floor gate deadlocks in real rooms (`vad_engine.py:109`) |
-| Voice state machine | **MISSING** | 4 enum values, no transitions, no guards; `PROCESSING` latches |
-| Recorder termination | **MISSING** | **CRITICAL** — no wall-clock deadline; a stalled mic hangs the session forever |
+| Voice state machine | **DONE 2026-09-29** | 8 states, transition table, atomic capture↔playback reservations (TD-32, TD-04); dead `Core/state_manager.py` removed |
+| Recorder termination | **DONE 2026-09-29** | **TD-03 closed** (`7dc99b4`); wall-clock deadline on the whole listen loop |
 | Barge-in | **PARTIAL** | prevents duplicates (good) but drops all interrupts over 2.2 s |
-| Echo control | **PARTIAL** | mic-closed discipline holds only in the console loop; the GUI violates it |
+| Echo control | **PARTIAL→DONE 2026-09-29** | state machine enforces mic-closed-during-TTS across console, GUI `_auto_loop` and remote TTS; GUI shares the mic lock (TD-04/TD-15). **HARDWARE UNVERIFIED** |
 | Wake word | **MISSING** | `WakeWord/` is empty; the live gate is substring matching after full transcription |
 | Agent / planning | **MISSING** | the LLM can only answer in prose; it never dispatches a skill |
 | Tool schemas | **MISSING** | no declarative argument contract |
@@ -87,22 +87,26 @@ Full detail: `ARCHITECTURE.md`. Gaps: `GAP_ANALYSIS.md`. Debt: `TECHNICAL_DEBT.m
 ## Verification (headless Linux dev box)
 
 | Check | Result |
-|---|---|
+|---|---|---|
 | `python -m compileall -q .` | **PASS** (exit 0) |
-| `python Tests/run_tests.py` | **Ran 139 tests — OK (skipped=1)** |
+| `python Tests/run_tests.py` | **Ran 208 tests — OK (skipped=1)**, ~13 s, clean exit |
 | Skipped | `Tests/audio_stream_test.AudioStreamTest.test_stream_start_stop` — requires `sounddevice` |
 | `ollama` binary | present at `/usr/local/bin/ollama` (client 0.34.4) |
 | `ollama` service | started locally; `llama3.2:3b` pulled (~2.0 GB) |
-| Real LLM round trip | **UNVERIFIED by tests** — no test covers `OllamaClient` |
+| Real LLM round trip | **UNVERIFIED by tests** — `OllamaClient` is mocked in `Tests/learning_test.py` so the suite runs offline |
 
 **Corrections:** the previous revision of this file claimed **90 tests**; the real
-count is **139**. It also overstated SEC-02 as an exposed live token — the
+count is **208**. It also overstated SEC-02 as an exposed live token — the
 `remote_server.token` value is empty, so nothing leaked. Both are corrected here.
 
-**Fixed today:** the suite no longer writes to the developer's live
-`Config/audio_config.json` (it used to force `tts_engine=piper`,
-`piper_voice=xyz` on every run), and `Config/*.json` is now gitignored with
-`*.example.json` committed in its place.
+**Fixed today (2026-09-29):**
+- the suite no longer writes to the developer's live `Config/audio_config.json`
+  (it used to force `tts_engine=piper`, `piper_voice=xyz` on every run), and
+  `Config/*.json` is now gitignored with `*.example.json` committed in its place;
+- `Tests/system_test.py::test_greeting` no longer fails after 22:00
+  (time-of-day-dependent assertion made deterministic);
+- `Tests/learning_test.py` mocks the Ollama client so the suite never blocks on
+  a slow/failed local model.
 
 Optional dependencies absent on this box: `sounddevice`, `faster_whisper`,
 `silero_vad`, `torch`, `edge_tts`, `pyttsx3`, `pyautogui`. They are imported
@@ -115,10 +119,10 @@ should be preserved.
 
 | ID | Severity | Summary |
 |---|---|---|
-| TD-01 | **CRITICAL** | Cancelled TTS finishes synthesising and plays into a reopened mic |
-| TD-02 | **CRITICAL** | One TTS failure latches `_speaking` → every later reply stalls 40 s, forever |
-| TD-03 | **CRITICAL** | Stalled capture hangs the conversation thread permanently |
-| TD-04 | HIGH | GUI auto-listen captures MAXIE's own speech → mutating commands re-execute |
+| TD-01 | **CLOSED 09-29** | Cancelled TTS finishes synthesising and plays into a reopened mic |
+| TD-02 | **CLOSED 09-29** | One TTS failure latches `_speaking` → every later reply stalls 40 s, forever |
+| TD-03 | **CLOSED 09-29** | Stalled capture hangs the conversation thread permanently |
+| TD-04 | **CLOSED 09-29 (WIP)** | GUI auto-listen captures MAXIE's own speech → mutating commands re-execute |
 | TD-05 | HIGH | Energy-VAD fallback drops every utterance in a quiet room |
 | TD-06 | HIGH | First-run STT/VAD load failure disables the subsystem permanently |
 | TD-07 | **CRITICAL** | Unbounded request bodies and threads on the remote server |
@@ -128,17 +132,22 @@ should be preserved.
 
 ---
 
-## Immediate next actions
+## Completed / in progress (2026-09-28 .. 29)
 
-1. **Stop the secret leak** (TD-08 / SEC-02): gitignore `Config/*.json`,
-   `git rm --cached`, ship a `.example.json` — *before any commit*. The token
-   value is currently empty, so nothing leaks until a real token is set.
-2. **Establish a git baseline** so incremental work is reviewable.
-3. **Fix the three CRITICAL voice defects** (TD-01, TD-02, TD-03) with
-   regression tests that fail without the fix.
-4. **Introduce the real voice state machine** (Phase 2) and route all capture
-   and playback through it — this is what closes TD-04 and the echo problem.
-5. **Harden the remote boundary** (TD-07, SEC-03/04/05/11).
+1. **Secret leak stopped** (TD-08 / SEC-02): `Config/*.json` gitignored,
+   moved to `git rm --cached`, `.example.json` shipped. No real token was ever
+   committed.
+2. **Git baseline established**: audit commit `9453f4c`, then logical source
+   commits `030c9e2` (TTS) and `7dc99b4` (recorder).
+3. **Three CRITICAL voice defects fixed** (TD-01/02/03) with regression tests
+   that fail without the fix.
+4. **Real voice state machine** implemented (TD-32, TD-04): `VoiceStateMachine`
+   with 8 states, validated transitions, and atomic capture↔playback
+   reservations; dead `Core/state_manager.py` removed; `Ui/gui.py` auto-listen
+   tamed. **WIP — wiring in this working tree, to be committed after review.**
+5. **Test determinism**: greeting test mock time-independent, `learning_test`
+   mocks Ollama, GUI-loop threads tear down. **208 tests, ~13 s, exit 0.**
+6. **Still open:** TD-05/06/07/B1, and the remote security group (SEC-03/04/05/11).
 
 Sequencing rationale: `ROADMAP.md`.
 

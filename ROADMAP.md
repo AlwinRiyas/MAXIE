@@ -67,19 +67,22 @@ of that foundation would multiply every defect.
 - **1.2** Pluggable device backend — **PARTIAL** (sounddevice only)
 - **1.3** Device hot-plug recovery — **MISSING**
 - **1.4** Adaptive AGC / gain — **MISSING** (O(n²) RMS sum)
-- **1.5** Bounded buffering + wall-clock deadline — **MISSING** (TD-03)
-- **1.6** Explicit stream lifecycle (close on `start()` failure) — **MISSING** (TD-31)
+- **1.5** Bounded buffering + wall-clock deadline — **DONE 2026-09-29** (TD-03, commit `7dc99b4`)
+- **1.6** Explicit stream lifecycle (close on `start()` failure) — **DONE 2026-09-29** (TD-31, commit `7dc99b4`)
 - **1.7** Absolute `voice.wav` path in `Config/temp_path()` + delete after use — **MISSING** (TD-31)
 - **1.8** Hardware verification — **BLOCKED** (no mic on dev box)
 
-## Phase 2 — Voice state machine · **MISSING**
+## Phase 2 — Voice state machine · **DONE in live WIP 2026-09-29**
 
-- **2.1** Expand `VoiceState` to `IDLE / WAKING / LISTENING / THINKING / ACTING / SPEAKING / COOLDOWN / ERROR` — **MISSING**
-- **2.2** Central `VoiceStateMachine` with a validated transition table — **MISSING** (TD-32)
-- **2.3** Delete dead `Core/state_manager.py` and `state_test.py`; point tests at the live machine — **MISSING** (TD-13)
-- **2.4** One lock, one owner: every capture and playback goes through the machine — **MISSING** (TD-04)
-- **2.5** Observable state changes emitted to subscribers — **MISSING**
-- **2.6** `PROCESSING` must return to `IDLE` on completion, including empty input — **MISSING**
+- **2.1** Expand `VoiceState` to `IDLE / WAKING / LISTENING / THINKING / ACTING / SPEAKING / COOLDOWN / ERROR` — **DONE**
+- **2.2** Central `VoiceStateMachine` with a validated transition table — **DONE** (TD-32)
+- **2.3** Delete dead `Core/state_manager.py`; point `Tests/state_test.py` at the live machine — **DONE** (TD-13)
+- **2.4** One lock, one owner: every capture and playback goes through the machine — **DONE** (TD-04, atomic reservations)
+- **2.5** Observable state changes emitted to subscribers — **DONE** (`subscribe(callback(prev, cur))`)
+- **2.6** Turn always returns to `IDLE`, including empty input — **DONE** (`ConversationEngine.end_turn()`)
+
+**Status note:** implemented and test-green (208 tests) in the working tree;
+awaiting review/commit.
 
 ## Phase 3 — VAD · **PARTIAL**
 
@@ -90,15 +93,15 @@ of that foundation would multiply every defect.
 - **3.5** Hangover / padding — **MISSING**
 - **3.6** Test the `noise_floor * 3.0` branch — **MISSING** (TD-05 is invisible to the suite)
 
-## Phase 4 — TTS engine abstraction · **DONE except cancellation**
+## Phase 4 — TTS engine abstraction · **DONE except lifecycle and cache**
 
 - **4.1** `TTSProvider` interface + Piper — **DONE**
 - **4.2** Edge TTS — **DONE** (`[UNVERIFIED]`)
 - **4.3** SAPI / pyttsx3 — **PARTIAL** (thread-lifecycle bugs, TD-33)
 - **4.4** espeak fallback — **DONE**
 - **4.5** Availability probe consulted by selection — **MISSING** (TD-33)
-- **4.6** **Cancellable synthesis** — **MISSING** (TD-01, the single worst bug)
-- **4.7** `_speaking` cleared in `finally` on every path — **MISSING** (TD-02)
+- **4.6** **Cancellable synthesis** — **DONE 2026-09-29** (TD-01, `030c9e2`)
+- **4.7** `_speaking` cleared in `finally` on every path — **DONE 2026-09-29** (TD-02, `030c9e2`)
 - **4.8** Non-blocking interface with watchdog — **DONE** — keep this
 - **4.9** Voice/speed parameters — **PARTIAL**
 - **4.10** Response cache — **MISSING**
@@ -126,14 +129,14 @@ of that foundation would multiply every defect.
 - **6.6** Release `BargeInListener` on the exception path — **MISSING** (TD-28)
 - **6.7** Hardware verification — **BLOCKED**
 
-## Phase 7 — Echo control · **PARTIAL**
+## Phase 7 — Echo control · **DONE in live WIP except AEC**
 
-- **7.1** Half-duplex: mic closed during TTS — **DONE in console only**
-- **7.2** **Enforced by the state machine so the GUI cannot violate it** — **MISSING** (TD-04)
+- **7.1** Half-duplex: mic closed during TTS — **DONE in console only** → **DONE across all surfaces 09-29**
+- **7.2** **Enforced by the state machine so the GUI cannot violate it** — **DONE 2026-09-29** (TD-04; atomic capture↔playback reservations)
 - **7.3** Echo-aware thresholds — **DONE**
 - **7.4** Reference-cancellation / WebRTC AEC — **MISSING** (documented limitation)
 - **7.5** Cooldown owned by the state machine, not a `sleep` on a side thread — **PARTIAL**
-- **7.6** Regression test: GUI auto-listen must never capture MAXIE's own speech — **MISSING**
+- **7.6** Regression test: GUI auto-listen must never capture MAXIE's own speech — **DONE** (`Tests/gui_loop_test.py`, `Tests/conversation_state_test.py`)
 
 ## Phase 8 — Command router / intent recognition · **PARTIAL**
 
@@ -272,8 +275,14 @@ of that foundation would multiply every defect.
 - **Stop the suite mutating real config** — **DONE** (2026-09-28). `Tests/tts_test.py`
   now redirects `Config.FILES` to a temp dir; a new guard test asserts the live
   `Config/audio_config.json` is byte-identical after a run. Proven to fail
-  without the isolation. Baseline is now **139 tests, 1 skipped**.
-- Deleting `Tests/state_test.py` with the dead class — **TODO**
+  without the isolation. Baseline is now **208 tests, 1 skipped** (~13 s).
+- Removing the dead `Core/state_manager.py` and pointing tests at the live
+  machine — **DONE 2026-09-29** (`Tests/state_test.py` now covers
+  `VoiceStateMachine`; the dead module is deleted).
+- Deterministic suite — **DONE 2026-09-29**: the 22:00-time-dependent greeting
+  assertion is gone; `Tests/learning_test.py` mocks the Ollama client; the
+  GUI-loop tests tear down their daemon threads, so the interpreter exits
+  cleanly.
 - Hardware smoke test suite for the laptop — **BLOCKED**
 
 ### 18.2 Observability · **MISSING**

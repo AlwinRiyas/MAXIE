@@ -1,6 +1,7 @@
 # MAXIE — TEST STATUS
 
 **Baseline recorded:** 2026-09-28, headless Linux dev box, Python 3.14.7.
+**Updated:** 2026-09-29 (Wave 1 — TTS, recorder, state machine).
 
 ---
 
@@ -11,19 +12,19 @@ $ python -m compileall -q .
 (exit 0)
 
 $ python Tests/run_tests.py
-Ran 139 tests in 13.805s
+Ran 208 tests in 12.7s
 OK (skipped=1)
 ```
 
 | Metric | Value |
 |---|---|
-| Tests discovered | 139 (138 + 1 guard test, see §1a) |
-| Passed | 138 |
+| Tests discovered | 208 |
+| Passed | 207 |
 | Failed | 0 |
 | Skipped | 1 |
 | Errors | 0 |
-| Wall time | ~16.6 s |
-| Suites | 20 files under `Tests/` |
+| Wall time | ~13 s |
+| Suites | 24 files under `Tests/` |
 
 **Skipped:** `Tests/audio_stream_test.AudioStreamTest.test_stream_start_stop` —
 `@unittest.skipUnless(AudioManager.is_available(), "requires sounddevice")`.
@@ -31,16 +32,16 @@ OK (skipped=1)
 
 ### Correction to previous claims
 
-`DEVELOPMENT_STATUS.md` previously stated **90 tests**. The real count is **138**.
+`DEVELOPMENT_STATUS.md` previously stated **90 tests**. The real count is **208**.
 The stale figure has been corrected.
 
 ---
 
-## 1a. Changes to the baseline (2026-09-28)
+## 1a. Changes to the baseline (2026-09-28 .. 2026-09-29)
 
 | Change | Before | After |
 |---|---|---|
-| Test count | 138 | **139** (+1 guard test, see §5) |
+| Test count | 139 | **208** |
 | `Config/audio_config.json` after a suite run | **mutated** — `tts_engine` forced to `piper`, `piper_voice` to `xyz` | **untouched** |
 
 `Tests/tts_test.py::InstallerConfigTest` now redirects `Config.FILES` to a
@@ -51,6 +52,28 @@ byte-identical before and after `Config.set_audio`.
 **Both directions verified.** Simulating the pre-fix test (no path isolation)
 made the new guard **fail** and mutated the live file; with the fix in place the
 suite leaves the live config unchanged.
+
+### Wave 1 additions (2026-09-29, commits `030c9e2`, `7dc99b4`)
+
+| Suite | Tests | Guards |
+|---|---|---|
+| `Tests/tts_cancel_test.py` | 10 | TD-01 (cancel during synth), TD-02 (`_speaking` latch), **Piper success-path playback** |
+| `Tests/recorder_deadline_test.py` | 5 | TD-03 wall-clock deadline, failed-`start()` stream close |
+| `Tests/state_test.py` (replaces dead `Core/state_manager` tests) | 34 | transition table, capture↔playback exclusion, atomic reservation |
+| `Tests/conversation_state_test.py` | 12 | turn→IDLE, THINKING mid-route, live-capture vs `end_turn()`, remote reservation |
+| `Tests/gui_loop_test.py` | 11 | TD-15 (no spin, no off-thread tkinter), TD-04 shared mic lock |
+
+**Regression directions verified:** the six TTS cancellation tests and the five
+recorder deadline tests fail against the reconstructed pre-fix source; the Piper
+success-playback test fails when the `_play_audio` call is removed; the state
+tests fail against the old four-value `VoiceState` (no `THINKING`, no
+`reserve_*`, always-IDLE `listen()`).
+
+**Determinism fixes:** `Tests/system_test.py::test_greeting` no longer asserts
+`startswith("Good")` (it failed every evening after 22:00); `Tests/learning_test.py`
+now mocks the Ollama client so the suite never blocks on a slow local model;
+the GUI-loop tests tear down their daemon threads so interpreter shutdown is
+instant (~13 s total).
 
 ## 2. Environment and optional dependencies
 
