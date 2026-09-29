@@ -19,7 +19,15 @@ class IntentEngine:
         if any(text.startswith(p) for p in ("open ", "launch ", "start ", "run ")):
             return "OPEN_APP"
 
+        if text in {"open", "launch", "start", "run"}:
+            # Phase 8.7: a bare verb still routes to the skill so the router
+            # can ask for the missing argument instead of dropping to the AI.
+            return "OPEN_APP"
+
         if any(text.startswith(p) for p in ("close ", "quit ", "kill ", "exit app ")):
+            return "CLOSE_APP"
+
+        if text in {"close", "kill"}:
             return "CLOSE_APP"
 
         # --------------------------------------------------
@@ -180,6 +188,9 @@ class IntentEngine:
 
         if any(text.startswith(p) for p in ("search for ", "search ",
                                             "look up ", "google ")):
+            return "SEARCH"
+
+        if text in {"search", "look up", "google"}:
             return "SEARCH"
 
         if text.startswith("play ") and not self._is_game_name(text):

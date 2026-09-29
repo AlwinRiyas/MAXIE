@@ -51,6 +51,14 @@ class IntentEngineTest(unittest.TestCase):
     def test_unknown_falls_back(self):
         self.assertEqual(self.intent.classify("explain quantum physics"), "UNKNOWN")
 
+    def test_bare_skill_verbs_stay_skills(self):
+        """Phase 8.7: a bare verb still routes to the skill so the router
+        can ask for the missing argument rather than dropping to the AI."""
+        self.assertEqual(self.intent.classify("open"), "OPEN_APP")
+        self.assertEqual(self.intent.classify("search"), "SEARCH")
+        self.assertEqual(self.intent.classify("close"), "CLOSE_APP")
+        self.assertEqual(self.intent.classify("kill"), "CLOSE_APP")
+
 
 if __name__ == "__main__":
     unittest.main()

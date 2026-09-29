@@ -142,11 +142,11 @@ awaiting review/commit.
 
 - **8.1** Deterministic fast path — **DONE**
 - **8.2** Fuzzy correction — **DONE**
-- **8.3** Clarification on low confidence — **MISSING**
-- **8.4** Multi-intent handling — **MISSING**
+- **8.3** Clarification on low confidence — **DONE 2026-09-29** (placeholder/unresolved-verb phrases ask; bare verbs route to the skill)
+- **8.4** Multi-intent handling — **DONE 2026-09-29** (safe `and`/`,` split, only independently-classifiable skill clauses)
 - **8.5** Unified intent registry with declared capabilities — **PARTIAL**
 - **8.6** LLM output never executed — **DONE** — preserve and test it
-- **8.7** Argument schema validation — **MISSING**
+- **8.7** Argument schema validation — **DONE 2026-09-29** (`ARG_REQUIRED`, `_has_argument`, per-intent prompts)
 
 ## Phase 9 — AI provider · **PARTIAL**
 

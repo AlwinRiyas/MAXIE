@@ -11,6 +11,19 @@ VERBS_CLOSE = ("close ", "kill ", "quit ", "exit app ")
 VERBS_SEARCH = ("search for ", "search ", "look up ", "google ")
 FORGET_PREFIXES = ("forget ", "delete my memory about ", "forget about ")
 
+# Phase 8.7: skills that require a non-empty argument. When the user
+# omits it ("open", "search", "set volume to" with nothing after), the
+# router asks for clarification instead of executing with an empty value
+# (which would silently do the wrong thing).
+ARG_REQUIRED = {
+    "OPEN_APP": "Which app should I open?",
+    "CLOSE_APP": "Which app should I close?",
+    "SEARCH": "What would you like me to search for?",
+    "YOUTUBE_SEARCH": "What should I search on YouTube?",
+    "TODO_ADD": "What should I add to your to-do list?",
+    "VOLUME": "What volume level should I set?",
+}
+
 
 class BrainRouter:
     """Routing: skills vs memory vs conversational AI.
@@ -39,6 +52,16 @@ class BrainRouter:
             return "I didn't catch that."
 
         corrected = self.corrector.correct(text)
+
+        # Phase 8.4: multi-intent. "open chrome and stop the music" is two
+        # independent skill actions. Safe only when *every* clause classifies
+        # to a deterministic, non-destructive skill intent; anything else
+        # (AI chat, memory, shared-argument math) falls through to the
+        # single-intent path below.
+        clauses = self._split_and(corrected)
+        if clauses:
+            return self._execute_clauses(clauses)
+
         intent = self.intent.classify(corrected)
 
         self.logger.info(f"Router: '{text}' -> intent={intent}")
@@ -78,6 +101,12 @@ class BrainRouter:
                       "TODO_CLEAR", "MEDIA_NEXT", "MEDIA_PREVIOUS",
                       "MEDIA_PLAY_PAUSE", "CALL_ANSWER", "CALL_REJECT",
                       "YOUTUBE_SEARCH", "RECOMMEND"):
+            # Phase 8.7: argument schema validation. "open", "search",
+            # "set volume to" carry no argument; ask instead of executing
+            # a skill with an empty value.
+            if intent in ARG_REQUIRED and not self._has_argument(value, intent):
+                self.logger.info(f"Router: missing argument for {intent}")
+                return ARG_REQUIRED[intent]
             return self.command.execute(intent, value, corrected)
 
         # ---------------- Memory ----------------
@@ -101,9 +130,102 @@ class BrainRouter:
         if intent == "HELP":
             return self._help_text()
 
+        # ---------------- Clarification (Phase 8.3) ----------------
+        # A phrase that opens with a skill verb but still classifies as
+        # UNKNOWN is asking for an action MAXIE cannot yet identify
+        # ("play the flute album", "open the thing on my desk"). Ask
+        # instead of silently handing it to the AI, which cannot act.
+        clarification = self._clarify(corrected)
+        if clarification:
+            return clarification
+
         # ---------------- Conversational AI ----------------
         answer = self.ai.ask(corrected)
         return answer
+
+    # ==================================================
+    # MULTI-INTENT (Phase 8.4)
+    # ==================================================
+
+    _MULTI_INTENT_OK = frozenset({
+        "OPEN_APP", "CLOSE_APP", "SEARCH", "VOLUME", "TIME", "DATE",
+        "WEATHER", "SYSTEM_INFO", "SCREENSHOT", "YOUTUBE_SEARCH",
+        "MEDIA_NEXT", "MEDIA_PREVIOUS", "MEDIA_PLAY_PAUSE",
+        "CALL_ANSWER", "CALL_REJECT", "RECOMMEND", "CALCULATE",
+        "TODO_LIST", "TODO_REMOVE",
+    })
+
+    def _split_and(self, corrected):
+        """Split 'clause1 and clause2' / 'clause1, clause2' into clauses.
+
+        Phase 8.4. Only splits when *every* clause is independently a
+        safe, deterministic skill intent with a real argument. Otherwise
+        returns an empty list so process() falls through to the normal
+        single-intent path ("search for dogs and cats" stays one SEARCH;
+        "open chrome and tell me a joke" stays one OPEN_APP).
+        """
+        text = corrected.strip()
+        candidates = [part.strip() for part in text.split(" and ")]
+        if len(candidates) == 1:
+            candidates = [part.strip() for part in text.split(", ")]
+        candidates = [c for c in candidates if c]
+        if len(candidates) < 2:
+            return []
+
+        for clause in candidates:
+            intent = self.intent.classify(clause)
+            if intent not in self._MULTI_INTENT_OK:
+                return []
+            if intent in ARG_REQUIRED and not self._has_argument(
+                    self._extract(clause, intent), intent):
+                return []
+        return candidates
+
+    def _execute_clauses(self, clauses):
+        """Execute a multi-intent command clause-by-clause.
+
+        Returns the joined response when *every* clause resolves to a
+        distinct safe skill intent with a real argument; otherwise None
+        so process() falls through to the single-intent path (which the
+        AI can answer correctly).
+        """
+        if len(clauses) < 2:
+            return None
+
+        responses = []
+        for clause in clauses:
+            intent = self.intent.classify(clause)
+            if intent not in self._MULTI_INTENT_OK:
+                return None
+            if intent in ARG_REQUIRED and not self._has_argument(
+                    self._extract(clause, intent), intent):
+                return None
+            value = self._extract(clause, intent)
+            responses.append(self.command.execute(intent, value, clause))
+        return " ".join(str(r) for r in responses)
+
+    # ==================================================
+    # CLARIFICATION (Phase 8.3)
+    # ==================================================
+
+    _UNKNOWN_VERB_PROMPTS = (
+        ("play ", "What would you like me to play?"),
+        ("open ", "I'm not sure what that is. Could you name the app?"),
+        ("launch ", "I'm not sure what that is. Could you name the app?"),
+        ("start ", "I'm not sure what that is. Could you name the app?"),
+        ("search ", "What would you like me to search for?"),
+        ("look up ", "What would you like me to look up?"),
+        ("close ", "I'm not sure what that is. Could you name the app?"),
+        ("stop ", "Would you like me to stop talking, or stop an app?"),
+    )
+
+    def _clarify(self, corrected):
+        to_check = (corrected or "").strip().lower()
+        for prefix, prompt in self._UNKNOWN_VERB_PROMPTS:
+            if to_check == prefix.strip() or to_check.startswith(prefix):
+                self.logger.info(f"Router: clarifying UNKNOWN verb phrase: {corrected}")
+                return prompt
+        return ""
 
     # ==================================================
     # CONTINUOUS LEARNING (auto-captured preferences)
@@ -143,6 +265,44 @@ class BrainRouter:
         except Exception as error:
             self.logger.error(f"Auto-learn failed: {error}")
             return None
+
+    # ==================================================
+    # ARGUMENT VALIDATION (Phase 8.7)
+    # ==================================================
+
+    _DEGENERATE = {"", "an", "a", "the", "it", "that", "this",
+                   "this app", "the app", "an app", "a app",
+                   "something", "to", "for", "up",
+                   "open", "launch", "start", "run",
+                   "close", "kill", "quit", "exit app",
+                   "search", "look up", "google"}
+
+    _PLACEHOLDER_WORDS = {
+    "whatever", "something", "anything", "thing", "the thing",
+    "this thing", "that thing", "stuff", "it",
+}
+
+    def _has_argument(self, value, intent):
+        """True when an argument-required intent has a real value.
+
+        'open', 'open the app', 'search for' carry no usable argument;
+        'open chrome' and 'set volume to 40' do. VOLUME additionally
+        needs a level, not just any text. Placeholder objects ("open
+        whatever", "start the thing") are not real arguments and ask
+        again (Phase 8.3).
+        """
+        if value is None:
+            return False
+        text = value.strip().lower()
+        if text in self._DEGENERATE:
+            return False
+        if not text:
+            return False
+        if intent == "VOLUME":
+            return any(char.isdigit() for char in text)
+        if any(word in text for word in self._PLACEHOLDER_WORDS):
+            return False
+        return True
 
     # ==================================================
     # VALUE EXTRACTION
