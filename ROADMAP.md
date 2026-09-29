@@ -63,13 +63,13 @@ of that foundation would multiply every defect.
 
 ## Phase 1 — Microphone capture · **PARTIAL**
 
-- **1.1** Isolated `MicrophoneCapture` — **MISSING** (logic inside `audio_recorder.py`)
-- **1.2** Pluggable device backend — **PARTIAL** (sounddevice only)
-- **1.3** Device hot-plug recovery — **MISSING**
-- **1.4** Adaptive AGC / gain — **MISSING** (O(n²) RMS sum)
+- **1.1** Isolated `MicrophoneCapture` — **DONE 2026-09-29** (new `Voice/microphone_capture.py`; stream lifecycle, queue, stall tracking)
+- **1.2** Pluggable device backend — **DONE** (`SoundDeviceStream` backend protocol; fake backend in tests)
+- **1.3** Device hot-plug recovery — **DONE** (`MicrophoneCapture.recover()` reopens a stalled stream, bounded retries)
+- **1.4** Adaptive AGC / gain — **DONE** (`_apply_agc`, slow-attack toward `agc_target_rms`, caps at `agc_max_gain`; O(n²) running sum replaced with a running counter)
 - **1.5** Bounded buffering + wall-clock deadline — **DONE 2026-09-29** (TD-03, commit `7dc99b4`)
 - **1.6** Explicit stream lifecycle (close on `start()` failure) — **DONE 2026-09-29** (TD-31, commit `7dc99b4`)
-- **1.7** Absolute `voice.wav` path in `Config/temp_path()` + delete after use — **MISSING** (TD-31)
+- **1.7** Absolute `voice.wav` path in `Config/temp_path()` + delete after use — **DONE** (TD-31, `SpeechPipeline` tempdir + removal)
 - **1.8** Hardware verification — **BLOCKED** (no mic on dev box)
 
 ## Phase 2 — Voice state machine · **DONE in live WIP 2026-09-29**

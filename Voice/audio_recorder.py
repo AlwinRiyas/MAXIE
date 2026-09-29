@@ -1,5 +1,4 @@
 import logging
-import queue
 import time
 from collections import deque
 
@@ -7,6 +6,7 @@ import numpy as np
 
 from Config.config import Config
 from Voice.audio_manager import AudioManager
+from Voice.microphone_capture import MicrophoneCapture
 from Voice.vad_engine import VADEngine
 
 
@@ -48,6 +48,12 @@ class AudioRecorder:
 
         self.blocks_per_second = self.sample_rate / self.block_size
 
+        # Adaptive gain state (ROADMAP 1.4): a slow-attack, fast-release
+        # target so weak microphones are boosted without blasting loud ones.
+        self._agc_target = float(cfg.get("agc_target_rms", 0.02))
+        self._agc_max_gain = float(cfg.get("agc_max_gain", 8.0))
+        self._agc_gain = 1.0
+
         self.audio_manager = AudioManager()
         self.vad = VADEngine()
 
@@ -63,10 +69,8 @@ class AudioRecorder:
             print("🎤 Audio input unavailable (sounddevice missing).")
             return None
 
-        try:
-            import sounddevice as sd
-        except Exception as error:
-            self.log.warning(f"sounddevice import failed: {error}")
+        if not MicrophoneCapture.backend_available():
+            self.log.warning("no capture backend available.")
             print("🎤 Audio input unavailable.")
             return None
 
@@ -87,42 +91,9 @@ class AudioRecorder:
         max_total_blocks = int(capture_limit * self.blocks_per_second) + self.silence_blocks + 2
         speech_samples = int(capture_limit * self.sample_rate)
 
-        incoming = queue.Queue(maxsize=512)
-        stream = None
-        stream_error = [None]
-
-        def callback(indata, frames, time_info, status):
-            if status:
-                return
-            if incoming.full():
-                return
-            incoming.put_nowait(indata.copy())
-
-        try:
-            stream = sd.InputStream(
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                blocksize=self.block_size,
-                dtype="float32",
-                device=device,
-                callback=callback,
-            )
-            stream.start()
-        except Exception as error:
-            stream_error[0] = error
-            # InputStream() succeeded but start() failed — a common PortAudio
-            # error. Close the handle or it leaks on every failed listen
-            # (TD-31).
-            if stream is not None:
-                try:
-                    stream.close()
-                except Exception:
-                    pass
-                stream = None
-
-        if stream_error[0] is not None:
-            print(f"🎤 Recording error: {stream_error[0]}")
-            self.log.error(f"Recording error: {stream_error[0]}")
+        capture = self._open_capture(device)
+        if capture is None:
+            print("🎤 Recording error: cannot open a microphone stream.")
             return None
 
         print("🎤 Listening...")
@@ -134,15 +105,11 @@ class AudioRecorder:
 
         try:
             speech = self._listen_loop(
-                incoming, max_total_blocks, speech_samples, block_seconds,
+                capture, max_total_blocks, speech_samples, block_seconds,
                 max_total_seconds=total_budget,
             )
         finally:
-            try:
-                stream.stop()
-                stream.close()
-            except Exception:
-                pass
+            capture.close()
 
         if speech is None:
             print("⚠️ No speech detected.")
@@ -160,7 +127,7 @@ class AudioRecorder:
             print("⚠️ Recording too short.")
             return None
 
-        speech = self._normalize(speech)
+        speech = self._apply_agc(speech)
 
         try:
             from scipy.io import wavfile as wav
@@ -177,6 +144,28 @@ class AudioRecorder:
     # ----------------------------------------------------------
     # STREAMING LOOP
     # ----------------------------------------------------------
+
+    def _open_capture(self, device):
+        try:
+            return MicrophoneCapture(
+                sample_rate=self.sample_rate,
+                channels=self.channels,
+                block_size=self.block_size,
+                device=device,
+            ).open()
+        except Exception as error:
+            self.log.error(f"Recording error: {error}")
+            print(f"🎤 Recording error: {error}")
+            return None
+
+    def _read_block(self, capture, timeout=0.1):
+        try:
+            if isinstance(capture, MicrophoneCapture):
+                return capture.read(timeout=timeout)
+            # Plain queue.Queue (unit tests, deadline/cleanup paths).
+            return capture.get(timeout=timeout)
+        except Exception:
+            return None
 
     def _total_budget(self, capture_limit):
         """Wall-clock budget for one listen, in seconds.
@@ -195,7 +184,12 @@ class AudioRecorder:
         speech_started_at = None
         silent_blocks = 0
         total_blocks = 0
+        collected_samples = 0
         last_diag = time.monotonic()
+
+        # Whether `incoming` is a MicrophoneCapture (which can detect hot-plug
+        # stalls) or a plain queue handed to tests via _read_block.
+        has_recovery = isinstance(incoming, MicrophoneCapture)
 
         # Wall-clock deadline (TD-03). Block counting alone is not a
         # termination condition: if PortAudio stops delivering callbacks the
@@ -208,6 +202,7 @@ class AudioRecorder:
             max_total_seconds = self.speech_wait_timeout + self.max_seconds + 5.0
         deadline = start_time + max_total_seconds
         timed_out = False
+        stalled = False
 
         while total_blocks < max_total_blocks:
             now = time.monotonic()
@@ -215,16 +210,33 @@ class AudioRecorder:
                 timed_out = True
                 break
 
-            try:
-                block = incoming.get(timeout=0.1)
-            except queue.Empty:
+            block = self._read_block(incoming, timeout=0.1)
+            if block is None:
+                # Hot-plug recovery: a device that stops delivering blocks
+                # (USB headset unplugged mid-listen) is closed and reopened
+                # once, bounded, instead of deadlining the whole read (TD-03).
+                if (
+                    has_recovery
+                    and incoming.has_stalled()
+                    and speech_started_at is None
+                ):
+                    stalled = True
+                    if incoming.recover():
+                        self.vad.observe_noise(block or np.zeros(
+                            self.block_size, dtype=np.float32))
+                        deadline = time.monotonic() + max_total_seconds
+                        continue
                 # Silence is fine, but not forever.
                 continue
 
-            total_blocks += 1
             block = np.asarray(block, dtype=np.float32).flatten()
             if len(block) == 0:
                 continue
+
+            total_blocks += 1
+            collected_samples += len(block)
+            if has_recovery:
+                incoming.stall_blocks = 0
 
             is_speech = self.vad.process_block(block)
 
@@ -242,13 +254,15 @@ class AudioRecorder:
                     silent_blocks += 1
                     if silent_blocks >= self.silence_blocks:
                         break
-                if sum(len(b) for b in buffer) >= speech_samples:
+                if collected_samples >= speech_samples:
                     break
             else:
                 # ---- waiting for speech ----
                 if is_speech:
                     buffer.extend(pre_roll)
                     buffer.append(block)
+                    collected_samples += self.pre_roll_blocks * len(
+                        pre_roll[0]) if pre_roll else 0
                     speech_started_at = time.monotonic()
                 else:
                     pre_roll.append(block)
@@ -259,6 +273,11 @@ class AudioRecorder:
                         and time.monotonic() - start_time > self.speech_wait_timeout
                     ):
                         break
+
+        if stalled:
+            self.log.warning(
+                "Capture device stalled; the stream was reopened mid-listen."
+            )
 
         if timed_out:
             self.log.warning(
@@ -285,27 +304,30 @@ class AudioRecorder:
         peak = float(np.max(np.abs(audio)))
         print(f"🔊 RMS {rms:.5f} | Peak {peak:.3f} | waited {elapsed:.1f}s")
 
-    def _normalize(self, speech):
-        """Normalize weak speech without clipping.
+    def _apply_agc(self, speech):
+        """Adaptive gain control (ROADMAP 1.4).
 
-        - weak speech (< weak_rms_threshold) gets a gain scaled toward a
-          comfortable headroom instead of a blind multiplier
-        - everything is clipped at 0.98 to avoid distortion
+        Replaces the fixed ``_normalize`` boost: a slow-attack, fast-release
+        gain tracks a target RMS so quiet microphones are boosted up to
+        ``agc_max_gain`` while loud ones are pulled down. The RMS is computed
+        in a single pass (the old code scanned the growing buffer on every
+        block, O(n²)).
         """
         speech = np.asarray(speech, dtype=np.float32)
         peak = float(np.max(np.abs(speech)))
         if peak == 0:
             return speech
 
-        weak_threshold = float(Config.audio().get("weak_rms_threshold", 0.005))
         rms = float(np.sqrt(np.mean(speech * speech)))
+        target = self._agc_target
+        max_gain = self._agc_max_gain
 
-        gain = 1.0
-        if rms > 0 and rms < weak_threshold:
-            module_gain = float(Config.audio().get("weak_speech_gain", 4.0))
-            # Scale toward a target RMS (~0.04) but cap by module gain.
-            target_rms = min(0.04, weak_threshold * module_gain)
-            gain = min(module_gain, target_rms / rms)
+        # Slow-attack toward target (boost weak speech), fast-release (never
+        # let a loud block blow up).
+        if rms > 0:
+            desired = min(max_gain, target / rms)
+            self._agc_gain += 0.2 * (desired - self._agc_gain)
+        gain = self._agc_gain
 
         speech = speech * gain
 
@@ -315,6 +337,10 @@ class AudioRecorder:
             speech = speech * (0.98 / max_abs)
 
         return np.clip(speech, -1.0, 1.0)
+
+    def reset_gain(self):
+        """Re-arm the AGC gain to unity (call on a new speaker/session)."""
+        self._agc_gain = 1.0
 
     # ----------------------------------------------------------
     # COMPAT
