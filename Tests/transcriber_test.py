@@ -50,5 +50,23 @@ class TranscriberRetryTest(unittest.TestCase):
         self.assertTrue(transcriber.available)
 
 
+class SharedTranscriberTest(unittest.TestCase):
+    """SEC-01 / ROADMAP 5.8: one Whisper model is cached process-wide."""
+
+    def tearDown(self):
+        Transcriber._shared = None
+
+    def test_shared_returns_one_instance(self):
+        self.assertIs(Transcriber.shared(), Transcriber.shared())
+
+    def test_shared_cached_across_calls(self):
+        first = Transcriber.shared()
+        second = Transcriber.shared()
+        self.assertIs(first, second)
+        Transcriber._shared = None
+        third = Transcriber.shared()
+        self.assertIsNot(second, third, "reset must produce a fresh instance")
+
+
 if __name__ == "__main__":
     unittest.main()

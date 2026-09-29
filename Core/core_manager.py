@@ -70,10 +70,15 @@ class Maxie:
             pass
 
     def _handle_voice(self, wav_path):
-        """Phone /voice endpoint: transcribe on the laptop and reply."""
+        """Phone /voice endpoint: transcribe on the laptop and reply.
+
+        Uses the process-wide cached Transcriber (SEC-01) so a burst of
+        phone requests shares one Whisper model instead of reloading it
+        per request (a memory/CPU DoS amplifier).
+        """
         from Voice.transcriber import Transcriber
 
-        transcriber = Transcriber()
+        transcriber = Transcriber.shared()
         if not transcriber.is_available():
             return {
                 "error": "Speech model is not installed on the laptop. "

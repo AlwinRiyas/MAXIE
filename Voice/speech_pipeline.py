@@ -11,7 +11,9 @@ class SpeechPipeline:
 
     def __init__(self):
         self.recorder = AudioRecorder()
-        self.transcriber = Transcriber()
+        # SEC-01 / ROADMAP 5.8: share the process-wide Whisper model so the
+        # laptop mic and the phone /voice endpoint never load it twice.
+        self.transcriber = Transcriber.shared()
         self.audio_manager = self.recorder.audio_manager
         self._tmpdir = None
 

@@ -11,9 +11,22 @@ class Transcriber:
     size. If faster-whisper isn't installed the transcriber degrades
     gracefully and returns empty text so the rest of MAXIE keeps
     running.
+
+    One model is cached process-wide (SEC-01 / ROADMAP 5.8): the phone
+    `/voice` endpoint and the laptop mic share the same instance instead
+    of re-loading Whisper on every request.
     """
 
     log = logging.getLogger("MAXIE.transcriber")
+
+    _shared = None
+
+    @classmethod
+    def shared(cls):
+        """The process-wide instance (SEC-01). Lazy, cheap to call."""
+        if cls._shared is None:
+            cls._shared = cls()
+        return cls._shared
 
     def __init__(self):
         cfg = Config.audio()

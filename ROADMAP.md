@@ -88,10 +88,10 @@ awaiting review/commit.
 
 - **3.1** `VADEngine` interface — **DONE**
 - **3.2** Silero backend — **DONE** (`[UNVERIFIED]`, not installed here)
-- **3.3** Energy fallback with calibrated SNR semantics — **MISSING** (TD-05: 3× floor deadlocks real rooms)
-- **3.4** Production caller for `reset_noise()` — **MISSING**
+- **3.3** Energy fallback with calibrated SNR semantics — **DONE 2026-09-29** (TD-05, `vad_noise_ratio` default 1.8)
+- **3.4** Production caller for `reset_noise()` — **DONE** (`AudioRecorder.record()`)
 - **3.5** Hangover / padding — **MISSING**
-- **3.6** Test the `noise_floor * 3.0` branch — **MISSING** (TD-05 is invisible to the suite)
+- **3.6** Test the `noise_floor` branch — **DONE** (`Tests/vad_test.py`, TD-05 visible to the suite)
 
 ## Phase 4 — TTS engine abstraction · **DONE except lifecycle and cache**
 
@@ -114,19 +114,19 @@ awaiting review/commit.
 - **5.2** faster-whisper adapter — **DONE** (`[UNVERIFIED]`)
 - **5.3** Real streaming decode with partials — **MISSING**
 - **5.4** Cancellation mid-utterance — **MISSING**
-- **5.5** Graceful degradation driven by STT availability, not `sounddevice` — **MISSING** (TD-06)
-- **5.6** Recoverable load: latch only on success, retry with backoff — **MISSING** (TD-06)
+- **5.5** Graceful degradation driven by STT availability, not `sounddevice` — **DONE 2026-09-29** (TD-06, `Transcriber.available`)
+- **5.6** Recoverable load: latch only on success, retry with backoff — **DONE 2026-09-29** (TD-06)
 - **5.7** Word-level timestamps for skills — **MISSING**
-- **5.8** Whisper model cached process-wide, not per `/voice` request — **MISSING** (SEC-01)
+- **5.8** Whisper model cached process-wide, not per `/voice` request — **DONE 2026-09-29** (SEC-01, `Transcriber.shared()`)
 
 ## Phase 6 — Barge-in / interrupt · **PARTIAL**
 
 - **6.1** `BargeInListener` exists — **DONE**
 - **6.2** No duplicate commands — **DONE** — preserve
-- **6.3** Preserve genuine long interrupts (drop the blanket `>2.2 s` reject) — **MISSING** (TD-30)
-- **6.4** Do not destroy an interrupt arriving in the final window — **MISSING** (TD-30)
-- **6.5** Single source of truth for stop phrases — **MISSING** (TD-30)
-- **6.6** Release `BargeInListener` on the exception path — **MISSING** (TD-28)
+- **6.3** Preserve genuine long interrupts (drop the blanket `>2.2 s` reject) — **DONE 2026-09-29** (TD-30)
+- **6.4** Do not destroy an interrupt arriving in the final window — **DONE 2026-09-29** (TD-30, drain window)
+- **6.5** Single source of truth for stop phrases — **DONE 2026-09-29** (TD-30, `VoiceCommands`)
+- **6.6** Release `BargeInListener` on the exception path — **DONE 2026-09-29** (TD-28, try/finally)
 - **6.7** Hardware verification — **BLOCKED**
 
 ## Phase 7 — Echo control · **DONE in live WIP except AEC**
@@ -165,15 +165,15 @@ awaiting review/commit.
 - **10.1** Working memory (conversation table) — **DONE**
 - **10.2** Long-term facts — **DONE**
 - **10.3** Preference learning — **PARTIAL** (matches inside negations)
-- **10.4** Semantic retrieval with IDF + stopwords + minimum score — **MISSING** (TD-19)
+- **10.4** Semantic retrieval with IDF + stopwords + minimum score — **DONE 2026-09-29** (TD-19)
 - **10.5** Cross-session persistence — **DONE**
 - **10.6** **Concurrency safety** (probed: 86% loss under 4 threads) — **MISSING**
-- **10.7** **Bounded context**; `get_context(0)` must not return everything — **MISSING** (TD-11)
-- **10.8** Retention sweep for the `conversation` table — **MISSING**
-- **10.9** Fix `migrate_json` storing `"True"`; one-shot migration marker — **MISSING** (TD-12)
-- **10.10** Collision-free fact keying (no first-5-words truncation) — **MISSING** (TD-41)
-- **10.11** Escape `LIKE` metacharacters in `search()` — **MISSING** (TD-18)
-- **10.12** `update()` must preserve `kind` — **MISSING** (TD-40)
+- **10.7** **Bounded context**; `get_context(0)` must not return everything — **DONE 2026-09-29** (TD-11, `prune_context`)
+- **10.8** Retention sweep for the `conversation` table — **DONE 2026-09-29** (TD-11, `conversation_cap`)
+- **10.9** Fix `migrate_json` storing `"True"`; one-shot migration marker — **DONE 2026-09-29** (TD-12)
+- **10.10** Collision-free fact keying (no first-5-words truncation) — **DONE 2026-09-29** (TD-41, sha1 suffix)
+- **10.11** Escape `LIKE` metacharacters in `search()` — **DONE 2026-09-29** (TD-18)
+- **10.12** `update()` must preserve `kind` — **DONE 2026-09-29** (TD-40)
 - **10.13** Named user profiles — **MISSING**
 - **10.14** Summarisation / compaction — **MISSING**
 
