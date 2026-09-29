@@ -62,6 +62,21 @@ class VoiceCommands:
         words = normalized.split()
         return all(word in ("stop", "quiet") for word in words)
 
+    def leads_stop(self, text):
+        """TD-30: True when the utterance *begins* with a stop phrase.
+
+        'stop, actually what time is it' leads with 'stop' and must
+        interrupt, even though the whole sentence is not a pure stop
+        phrase and is longer than MAXIE's own-speech gate.
+        """
+        normalized = self._normalize(text)
+        if not normalized:
+            return False
+        for phrase in self.STOP_PHRASES:
+            if normalized == phrase or normalized.startswith(phrase + " "):
+                return True
+        return False
+
     def is_exit(self, text):
         """True for exit/shutdown phrases ("exit", "goodbye", ...)."""
         return self._normalize(text) in self.EXIT_PHRASES

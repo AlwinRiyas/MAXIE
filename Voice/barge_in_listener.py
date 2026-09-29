@@ -7,38 +7,30 @@ import numpy as np
 
 from Config.config import Config
 from Logs.logger import Logger
+from Brain.voice_commands import VoiceCommands
 
 
 class BargeInListener:
     """Echo-aware STOP detection while MAXIE is speaking.
 
     Runs a separate microphone stream during TTS. Only short, pure
-    stop-phrase utterances can interrupt:
+    stop-phrase utterances (or ones that *begin* with a stop phrase,
+    e.g. "stop, actually what time is it") can interrupt:
 
       - adaptive RMS threshold (noise floor measured live, so the
         laptop speaker -> laptop microphone path isn't mistaken for a
         new utterance)
-      - utterances longer than ``max_utterance_seconds`` (i.e. MAXIE's
-        own continuous speech) are never treated as a stop command
+      - utterances longer than ``max_utterance_seconds`` are decoded and
+        accepted only when they *lead* with a stop phrase; MAXIE's own
+        continuous speech is otherwise never treated as a stop command
       - recognized text must be a pure stop phrase ("stop", "stop stop",
-        "be quiet", ...)
+        "be quiet", ...) or start with one
 
-    Also guarded by a short settlement period after start.
+    Stop phrases come from ``VoiceCommands.STOP_PHRASES`` (single source
+    of truth). Also guarded by a short settlement period after start.
     """
 
-    STOP_PHRASES = {
-        "stop",
-        "stop stop",
-        "stop speaking",
-        "shut up",
-        "shut up stop",
-        "be quiet",
-        "quiet",
-        "quiet stop",
-        "enough",
-        "cancel",
-        "stop now",
-    }
+    STOP_PHRASES = VoiceCommands.STOP_PHRASES
 
     def __init__(self, transcriber, device):
         self.transcriber = transcriber
@@ -194,18 +186,28 @@ class BargeInListener:
             return False
 
         duration = len(audio) / self.sample_rate
-        if duration > self.max_utterance_seconds:
-            # Too long -> almost certainly MAXIE's own speech, not a
-            # user's short STOP. Ignore to prevent echo false positives.
-            return False
-
         text = self._transcribe(audio)
         if not text:
             return False
 
+        commands = VoiceCommands()
+        if duration > self.max_utterance_seconds:
+            # Long utterance: almost certainly MAXIE's own speech, *unless*
+            # it starts with a stop phrase ("stop, actually what time is
+            # it"). TD-30: the old duration-only gate dropped those
+            # legitimate interrupts.
+            if not commands.leads_stop(text):
+                return False
+            self.logger.info(f"Barge-in recognized: {text}")
+            print("🛑 STOP command detected.")
+            self.interrupted = True
+            self.running = False
+            self._close_stream()
+            return True
+
         self.logger.info(f"Barge-in recognized: {text}")
 
-        if self._is_stop(text):
+        if commands.is_stop(text):
             print("🛑 STOP command detected.")
             self.interrupted = True
             self.running = False
@@ -259,21 +261,8 @@ class BargeInListener:
         return text
 
     def _is_stop(self, text):
-        text = text.strip()
-        for char in (".", ",", "!", "?"):
-            text = text.replace(char, "")
-        text = " ".join(text.split())
-
-        if text in self.STOP_PHRASES:
-            return True
-
-        words = text.split()
-        if words and all(word == "stop" for word in words):
-            return True
-        if words and all(word == "quiet" for word in words):
-            return True
-
-        return False
+        """TD-30: delegate to VoiceCommands, the single source of truth."""
+        return VoiceCommands().is_stop(text)
 
     # ----------------------------------------------------------
     # STATUS / STOP

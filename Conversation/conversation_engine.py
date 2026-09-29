@@ -222,21 +222,23 @@ class ConversationEngine:
         self._log(f"🎤 Microphone: {mic_name}")
         self._log("Say 'exit' to close MAXIE. Say 'stop' to interrupt.\n")
 
-        while self.running.is_set():
-            # Wake-word dislike: optional text gate before listening.
-            if Config.system().get("wake_word_enabled", False):
-                if not self._wait_for_wake_word():
+        try:
+            while self.running.is_set():
+                # Wake-word dislike: optional text gate before listening.
+                if Config.system().get("wake_word_enabled", False):
+                    if not self._wait_for_wake_word():
+                        continue
+
+                command = self.voice_manager.listen()
+                if not command or not command.strip():
                     continue
 
-            command = self.voice_manager.listen()
-            if not command or not command.strip():
-                continue
-
-            command = command.strip()
-            self._log(f"\nYou : {command}")
-            self._handle_command(command)
-
-        self._cleanup_voice()
+                command = command.strip()
+                self._log(f"\nYou : {command}")
+                self._handle_command(command)
+        finally:
+            # TD-28: cleanup must run even when a loop iteration raises.
+            self._cleanup_voice()
 
     def _start_text_mode(self):
         self._log("\n========== MAXIE TEXT MODE ==========")
@@ -332,6 +334,7 @@ class ConversationEngine:
         if self.barge_in is not None:
             self.barge_in.start()
 
+        interrupted = False
         try:
             deadline = time.time() + 40
             while self.voice_engine.is_speaking() and self.running.is_set():
@@ -339,12 +342,32 @@ class ConversationEngine:
                     self.voice_engine.stop()
                     break
                 if self.barge_in is not None and self.barge_in.was_interrupted():
-                    self._log("\n🛑 Speech interrupted by user.")
-                    self._stop_utterance()
-                    return
+                    interrupted = True
+                    break
 
                 time.sleep(0.03)
+
+            # Drain: an interrupt that arrives in the final frame of TTS (or
+            # is still being decoded) must not be killed by the cleanup below.
+            # Poll briefly even after is_speaking() turns False (TD-30).
+            if not interrupted and self.barge_in is not None:
+                drain_deadline = time.time() + 0.35
+                while time.time() < drain_deadline and self.running.is_set():
+                    if self.barge_in.was_interrupted():
+                        interrupted = True
+                        break
+                    time.sleep(0.02)
+
+            if interrupted:
+                self._log("\n🛑 Speech interrupted by user.")
         finally:
+            # Cut MAXIE's own speech only when the user actually interrupted;
+            # otherwise the loop already exited because speech completed.
+            if interrupted or (
+                self.barge_in is not None
+                and self.barge_in.was_interrupted()
+            ):
+                self.voice_engine.stop()
             if self.barge_in is not None:
                 self.barge_in.stop()
             self._flush_microphone()
