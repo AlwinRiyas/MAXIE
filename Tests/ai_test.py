@@ -10,9 +10,25 @@ class _FakeClient:
         self.asked = None
         self.response = "Certainly. That is a clean, confident answer."
 
+    def is_available(self):
+        return True
+
     def ask(self, prompt, history=None, system=None):
         self.asked = {"prompt": prompt, "history": history or [], "system": system}
         return self.response
+
+
+class _ProbeClient(_FakeClient):
+    """Tracks availability probes so tests can assert they happen."""
+
+    def __init__(self, available=True):
+        super().__init__()
+        self.available = available
+        self.probes = 0
+
+    def is_available(self):
+        self.probes += 1
+        return self.available
 
 
 class _FakeMemory:
@@ -130,6 +146,91 @@ class AIEngineTest(unittest.TestCase):
         self.assertEqual(
             len(self.memory.history), 2,
             "a legitimate prose answer must still be persisted",
+        )
+
+
+class AvailabilityProbeTest(unittest.TestCase):
+    """ROADMAP 9.3 / TD-34: is_available() is actually called."""
+
+    def test_probe_called_every_ask_when_ttl_zero(self):
+        client = _ProbeClient()
+        ai = AIEngine(client=client, memory=_FakeMemory(), availability_ttl=0)
+        ai.ask("hello")
+        ai.ask("again")
+        self.assertEqual(client.probes, 2)
+
+    def test_probe_cached_within_ttl(self):
+        client = _ProbeClient()
+        ai = AIEngine(
+            client=client, memory=_FakeMemory(), availability_ttl=3600)
+        ai.ask("hello")
+        ai.ask("again")
+        self.assertEqual(client.probes, 1)
+
+    def test_down_backend_fails_fast_and_does_not_leak(self):
+        client = _ProbeClient(available=False)
+        memory = _FakeMemory()
+        ai = AIEngine(client=client, memory=memory, availability_ttl=0)
+        answer = ai.ask("hello")
+        self.assertIn("can't reach", answer)
+        self.assertIsNone(client.asked, "ask() must not be called when down")
+        self.assertEqual(
+            memory.history, [], "offline probe must not persist context"
+        )
+
+    def test_is_available_delegates_to_client(self):
+        client = _ProbeClient(available=False)
+        ai = AIEngine(client=client, memory=_FakeMemory())
+        self.assertFalse(ai.is_available())
+        client.available = True
+        self.assertTrue(ai.is_available())
+
+
+class ContextBudgetTest(unittest.TestCase):
+    """ROADMAP 9.6: history is bounded before it reaches the model."""
+
+    def test_oversized_history_drops_oldest_rows(self):
+        client = _FakeClient()
+        memory = _FakeMemory()
+        memory.history = [
+            ("user", "old question"),
+            ("assistant", "old answer"),
+            ("user", "recent question"),
+            ("assistant", "recent answer"),
+        ]
+        ai = AIEngine(
+            client=client, memory=memory,
+            max_context_chars=30, max_row_chars=20,
+        )
+        ai.ask("the new question")
+        self.assertNotIn(("user", "old question"), client.asked["history"])
+        self.assertNotIn(("assistant", "old answer"), client.asked["history"])
+        self.assertIn(("assistant", "recent answer"), client.asked["history"])
+
+    def test_single_oversized_row_is_truncated(self):
+        client = _FakeClient()
+        memory = _FakeMemory()
+        memory.history = [("user", "x" * 500)]
+        ai = AIEngine(
+            client=client, memory=memory,
+            max_context_chars=10000, max_row_chars=50,
+        )
+        ai.ask("hello")
+        sent = client.asked["history"][0][1]
+        self.assertLessEqual(len(sent), 56)  # 50 chars + " ..." suffix
+
+    def test_budget_inside_default_is_noop(self):
+        client = _FakeClient()
+        memory = _FakeMemory()
+        memory.history = [("user", "short"), ("assistant", "reply")]
+        ai = AIEngine(
+            client=client, memory=memory,
+            max_context_chars=10000, max_row_chars=10000,
+        )
+        ai.ask("hello")
+        self.assertEqual(
+            client.asked["history"],
+            [("user", "short"), ("assistant", "reply")],
         )
 
 

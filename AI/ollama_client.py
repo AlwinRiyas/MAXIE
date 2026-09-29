@@ -1,8 +1,11 @@
 import logging
+import time
+
 import requests
 
-from Config.config import Config
 from AI.prompts import SYSTEM_PROMPT
+from AI.llm_provider import LLMProvider
+from Config.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -15,30 +18,54 @@ GENERIC_ERROR_MESSAGE = "I hit an error talking to the model. Try again in a mom
 GENERIC_ERROR_PREFIX = "I hit an error talking to the model"
 
 
-class OllamaClient:
-    """Ollama chat client (provider abstraction).
+def _default_int(cfg, key, default):
+    try:
+        return int(cfg.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+class OllamaClient(LLMProvider):
+    """Ollama chat client (ROADMAP 9.1/9.2 provider adapter).
 
     Model/URL/temperature/size all come from Config -> ai section so
     the provider can be swapped without touching Brain or Conversation.
+    Optional keyword overrides (``url``, ``retries``, ``retry_delay``,
+    ``probe_timeout``) let tests and callers substitute values without
+    touching on-disk config.
+
+    Failure strings are the stable module-level constants above; replies
+    never embed the provider URL (SEC-05 / ROADMAP 9.9).
     """
 
-    def __init__(self):
+    def __init__(self, **overrides):
         cfg = Config.ai_config()
 
-        base = (cfg.get("url") or "http://127.0.0.1:11434").rstrip("/")
+        base = (overrides.get("url") or cfg.get("url")
+                or "http://127.0.0.1:11434").rstrip("/")
         self.chat_url = f"{base}/api/chat"
         self.generate_url = f"{base}/api/generate"
         self.tags_url = f"{base}/api/tags"
 
-        self.model = cfg.get("model") or "llama3.2:3b"
-        self.temperature = float(cfg.get("temperature", 0.2))
-        self.max_tokens = int(cfg.get("max_tokens", 150))
-        self.num_ctx = int(cfg.get("num_ctx", 2048))
-        self.timeout = int(cfg.get("timeout", 45))
+        self.model = overrides.get("model") or cfg.get("model") or "llama3.2:3b"
+        self.temperature = float(overrides.get("temperature")
+                                 or cfg.get("temperature", 0.2))
+        self.max_tokens = _default_int(overrides, "max_tokens",
+                                       _default_int(cfg, "max_tokens", 150))
+        self.num_ctx = _default_int(overrides, "num_ctx",
+                                    _default_int(cfg, "num_ctx", 2048))
+        self.timeout = _default_int(overrides, "timeout",
+                                    _default_int(cfg, "timeout", 45))
+        self.retries = _default_int(overrides, "retries",
+                                    _default_int(cfg, "retries", 2))
+        self.retry_delay = float(overrides.get("retry_delay")
+                                 or cfg.get("retry_delay_seconds", 1.0))
+        self.probe_timeout = float(overrides.get("probe_timeout")
+                                   or cfg.get("probe_timeout", 3.0))
 
     def is_available(self):
         try:
-            response = requests.get(self.tags_url, timeout=3)
+            response = requests.get(self.tags_url, timeout=self.probe_timeout)
             return response.status_code == 200
         except requests.RequestException:
             return False
@@ -62,27 +89,56 @@ class OllamaClient:
             },
         }
 
-        try:
-            response = requests.post(
-                self.chat_url, json=payload, timeout=self.timeout
-            )
-            response.raise_for_status()
-            data = response.json()
-            answer = (
-                data.get("message", {}).get("content")
-                or data.get("response")
-                or ""
-            )
-            return answer.strip()
-        except requests.exceptions.ConnectionError:
+        # ROADMAP 9.7: transient failures (connection reset, timeout,
+        # HTTP 429/5xx) retry with linear backoff. Non-transport errors
+        # (malformed JSON, coding bugs) fail immediately and collapse to
+        # the generic message so a broken request cannot loop.
+        last_error = None
+        for attempt in range(self.retries + 1):
+            try:
+                response = requests.post(
+                    self.chat_url, json=payload, timeout=self.timeout
+                )
+                response.raise_for_status()
+                data = response.json()
+                answer = (
+                    data.get("message", {}).get("content")
+                    or data.get("response")
+                    or ""
+                )
+                return answer.strip()
+            except requests.exceptions.Timeout as error:
+                last_error = error
+            except requests.exceptions.ConnectionError as error:
+                last_error = error
+            except requests.exceptions.HTTPError as error:
+                code = error.response.status_code if error.response else 0
+                if code < 500 and code != 429:
+                    logger.warning("Ollama HTTP error %s: %s", code, error)
+                    return GENERIC_ERROR_MESSAGE
+                last_error = error
+            except Exception as error:  # noqa: BLE001 - surface as generic, log detail
+                logger.warning("Ollama request error: %s", error)
+                return GENERIC_ERROR_MESSAGE
+
+            if attempt >= self.retries:
+                return self._final_failure_message(last_error)
+            time.sleep(self.retry_delay * (attempt + 1))
+
+        return self._final_failure_message(last_error)
+
+    @staticmethod
+    def _final_failure_message(error):
+        """Map the last transient failure to the stable user-facing
+        string. Never includes the URL or a stack trace (SEC-05)."""
+        if isinstance(error, requests.exceptions.Timeout):
+            logger.warning("Ollama request timed out after %ss", "retries exhausted")
+            return TIMEOUT_MESSAGE
+        if isinstance(error, requests.exceptions.ConnectionError):
             logger.warning("Ollama connection failed (b1 classified offline)")
             return CONNECTION_ERROR_MESSAGE
-        except requests.exceptions.Timeout:
-            logger.warning("Ollama request timed out after %ss", self.timeout)
-            return TIMEOUT_MESSAGE
-        except Exception as error:  # noqa: BLE001 - surface as generic, log detail
-            logger.warning("Ollama request error: %s", error)
-            return GENERIC_ERROR_MESSAGE
+        logger.warning("Ollama request failed after retries: %s", error)
+        return GENERIC_ERROR_MESSAGE
 
     def ask_generate(self, prompt):
         payload = {

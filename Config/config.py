@@ -37,6 +37,11 @@ class Config:
             "max_tokens": 150,
             "num_ctx": 2048,
             "context_turns": 6,
+            "retries": 2,
+            "retry_delay_seconds": 1.0,
+            "availability_ttl_seconds": 10.0,
+            "max_context_chars": 6000,
+            "max_context_row_chars": 2000,
         },
         "memory": {
             "conversation_cap": 500,

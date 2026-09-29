@@ -1,4 +1,5 @@
 import re
+import time
 
 from AI.ollama_client import (
     CONNECTION_ERROR_MESSAGE,
@@ -31,17 +32,55 @@ class AIEngine:
     Holds a short-term context so follow-up questions ("Who created
     it?") resolve correctly. Relevant stored memories are added to the
     system prompt so MAXIE can answer from personal memory.
+
+    Talks to any :class:`AI.llm_provider.LLMProvider`; probes
+    availability up-front (cached for a short TTL) so a downed backend
+    fails fast instead of burning the full request timeout, and bounds
+    the history payload before it reaches the model (ROADMAP 9.3/9.6).
     """
 
-    def __init__(self, client=None, memory=None):
+    def __init__(self, client=None, memory=None, availability_ttl=None,
+                 max_context_chars=None, max_row_chars=None):
         self.client = client if client is not None else OllamaClient()
         self.memory = memory if memory is not None else MemoryEngine()
+
+        cfg = Config.ai_config()
+        if availability_ttl is None:
+            availability_ttl = float(cfg.get("availability_ttl_seconds", 10.0))
+        self.availability_ttl = availability_ttl
+        self.max_context_chars = (
+            max_context_chars
+            if max_context_chars is not None
+            else int(cfg.get("max_context_chars", 6000))
+        )
+        self.max_row_chars = (
+            max_row_chars
+            if max_row_chars is not None
+            else int(cfg.get("max_context_row_chars", 2000))
+        )
+
+        self._probe_at = 0.0
+        self._probe_available = True
+
+    def is_available(self):
+        """Fail-fast health check (ROADMAP 9.3) — TD-34 fix.
+
+        ``BrainRouter`` / the GUI can call this to tell the user the LLM
+        is down before any request is attempted.
+        """
+        return self.client.is_available()
 
     def ask(self, question):
         if not question.strip():
             return "I didn't catch that."
 
-        history = self.memory.get_context()
+        if not self._probe_available or time.monotonic() >= self._probe_at:
+            self._probe_available = self.client.is_available()
+            self._probe_at = time.monotonic() + self.availability_ttl
+            if not self._probe_available:
+                return CONNECTION_ERROR_MESSAGE
+
+        history = self._apply_budget(self.memory.get_context())
         system = self._build_system_prompt()
 
         raw = self.client.ask(question, history=history, system=system)
@@ -53,6 +92,41 @@ class AIEngine:
             self.memory.add_context("assistant", answer)
 
         return answer
+
+    def _apply_budget(self, history):
+        """Bound the context payload (ROADMAP 9.6).
+
+        ``history`` is ``[(role, content), ...]`` newest-last. Drop the
+        oldest rows first until the total fits ``max_context_chars``;
+        truncate any single oversized row to ``max_row_chars``. This is
+        the client-side guard that keeps num_ctx from being blown by a
+        giant stored memory line, independent of server-side limits.
+        """
+        budget = list(history or [])
+        clips = 0
+        total = sum(len(content) for _, content in budget)
+        while total > self.max_context_chars and len(budget) > 1:
+            role, content = budget.pop(0)
+            total -= len(content)
+            clips += 1
+
+        rows = []
+        for idx, (role, content) in enumerate(budget):
+            if len(content) > self.max_row_chars:
+                content = content[: self.max_row_chars].rstrip() + " ..."
+            rows.append((role, content))
+
+        if clips:
+            self.logger.info(
+                f"AI: context budget dropped {clips} oldest rows")
+
+        return rows
+
+    @property
+    def logger(self):
+        from Logs.logger import Logger
+
+        return Logger.instance()
 
     def _build_system_prompt(self):
         base = OllamaClient.system_prompt()

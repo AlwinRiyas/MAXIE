@@ -150,15 +150,15 @@ awaiting review/commit.
 
 ## Phase 9 — AI provider · **PARTIAL**
 
-- **9.1** `LLMProvider` interface — **MISSING** (TD-34)
-- **9.2** Ollama adapter — **DONE** (`[UNVERIFIED]`, no test)
-- **9.3** Availability probe actually called — **MISSING** (TD-34)
-- **9.4** Additional providers (llama.cpp, OpenAI-compatible) — **MISSING**
-- **9.5** Streaming responses — **MISSING**
-- **9.6** Token/word budget — **MISSING**
-- **9.7** Retry with backoff — **MISSING**
-- **9.8** **Classify all four failure modes; never persist an error as context** — **MISSING** (B1 defect, TD under `SECURITY_AUDIT` §3)
-- **9.9** Never leak the internal URL to the user — **MISSING** (SEC-05)
+- **9.1** `LLMProvider` interface — **DONE 2026-09-29** (`AI/llm_provider.py`: `ask`/`is_available` ABC; `OllamaClient(LLMProvider)`; `from_config` override hook) — TD-34
+- **9.2** Ollama adapter — **DONE** (`Tests/ollama_client_test.py`: 12 headless tests via patched requests)
+- **9.3** Availability probe actually called — **DONE 2026-09-29** (`AIEngine.ask` probes `client.is_available()` up-front, TTL-cached via `availability_ttl_seconds`; `AIEngine.is_available()` delegates) — TD-34
+- **9.4** Additional providers (llama.cpp, OpenAI-compatible) — **MISSING** (interface is ready; adapt new backend at the boundary)
+- **9.5** Streaming responses — **MISSING** (`stream: False` today; TTS prefers final text)
+- **9.6** Token/word budget — **DONE 2026-09-29** (`context_turns` caps turns; `_apply_budget` in `AIEngine` caps total chars and single-row length via `max_context_chars`/`max_context_row_chars`)
+- **9.7** Retry with backoff — **DONE 2026-09-29** (ConnectionError/Timeout/429/5xx retry `retries` times with linear `retry_delay_seconds`; permanent errors fail fast)
+- **9.8** **Classify all four failure modes; never persist an error as context** — **DONE** (B1 fixes + `test_all_four_failure_modes_never_persist` + `test_offline_failure_not_persisted`)
+- **9.9** Never leak the internal URL to the user — **DONE 2026-09-29** (docstring contract + `test_failure_messages_never_leak_internal_url`) — SEC-05 (provider half)
 
 ## Phase 10 — Memory system · **PARTIAL**
 
