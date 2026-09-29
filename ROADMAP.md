@@ -164,7 +164,7 @@ awaiting review/commit.
 
 - **10.1** Working memory (conversation table) — **DONE**
 - **10.2** Long-term facts — **DONE**
-- **10.3** Preference learning — **PARTIAL** (matches inside negations)
+- **10.3** Preference learning — **DONE 2026-09-29** (negation guard: `_auto_learn` skips phrases with negation before the marker; tests for "don't like", downgraded possession, mixed positive/negative)
 - **10.4** Semantic retrieval with IDF + stopwords + minimum score — **DONE 2026-09-29** (TD-19)
 - **10.5** Cross-session persistence — **DONE**
 - **10.6** **Concurrency safety** (probed: 86% loss under 4 threads) — **MISSING**

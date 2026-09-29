@@ -242,6 +242,11 @@ class BrainRouter:
             "i am learning ", "i'm learning ", "i am studying ",
             "i study ", "i'm studying ",
         )
+        negations = (
+            "don't ", "dont ", "do not ", "doesn't ", "doesnt ",
+            "does not ", "didn't ", "didnt ", "did not ", "isn't ",
+            "isnt ", "am not ", "can't ", "cant ", "cannot ", "not ",
+        )
         first = None
         for marker in markers:
             idx = corrected.find(marker)
@@ -249,6 +254,10 @@ class BrainRouter:
                 first = idx
 
         if first is None:
+            return None
+
+        head = corrected[:first].strip()
+        if head and any(negation in " " + head + " " for negation in negations):
             return None
 
         fact = corrected[first:].strip()

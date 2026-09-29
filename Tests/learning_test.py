@@ -65,6 +65,35 @@ class AutoLearnTest(unittest.TestCase):
         self.assertIsNotNone(remembered)
         self.assertIn("interstellar", remembered)
 
+    def test_negated_preference_is_not_learned(self):
+        """Phase 10.3: 'i don't like X' must never be stored as a
+        preference. Auto-learn only fires on positive statements."""
+        router = self.router()
+        before = len(MemoryEngine(MemoryDatabase(self.db_path)).all())
+        router.process("i don't like waiting")
+        router.process("i do not enjoy loud noises")
+        engine = MemoryEngine(MemoryDatabase(self.db_path))
+        self.assertEqual(len(engine.all()), before)
+
+    def test_downgraded_possession_not_learned(self):
+        router = self.router()
+        before = len(MemoryEngine(MemoryDatabase(self.db_path)).all())
+        router.process("why don't my favorite shows load")
+        engine = MemoryEngine(MemoryDatabase(self.db_path))
+        self.assertEqual(len(engine.all()), before)
+
+    def test_positive_and_negative_same_sentence(self):
+        router = self.router()
+        before = MemoryEngine(MemoryDatabase(self.db_path)).all()
+        before_keys = {row["key"] for row in before}
+        router.process("i like jazz but i don't like opera")
+        after = MemoryEngine(MemoryDatabase(self.db_path)).all()
+        gained = [row for row in after if row["key"] not in before_keys]
+        self.assertEqual(len(gained), 1)
+        combined = f"{gained[0]['key']} {gained[0]['value']}".lower()
+        self.assertIn("jazz", combined)
+        self.assertNotIn("opera", combined)
+
 
 class MemorySynonymRecallTest(unittest.TestCase):
 
