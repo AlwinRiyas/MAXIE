@@ -41,5 +41,9 @@
     "max_connections": 16,
     "audit_log": false
   },
+  "logging": {
+    "log_utterances": false,
+    "retention_days": 7
+  },
   "allow_local_power_control": false
 }

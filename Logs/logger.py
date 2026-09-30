@@ -1,6 +1,8 @@
+import hashlib
 import logging
 import os
 import threading
+import time
 from logging.handlers import RotatingFileHandler
 
 from Config.config import Config
@@ -83,6 +85,60 @@ class Logger:
             finally:
                 self.logger.removeHandler(handler)
         type(self)._instance = None
+
+    @staticmethod
+    def utterance(text):
+        """Render a user utterance for the log (TD-17).
+
+        Plaintext utterances are never written to disk by default: the
+        log gets a character count plus a short digest, which is enough
+        to correlate the same utterance across lines and to prove a leak
+        in a test, without persisting the words. Set
+        ``logging.log_utterances: true`` in ``Config/system_config.json``
+        to opt back in to plaintext (debugging only).
+        """
+        text = "" if text is None else str(text)
+        settings = Config.system().get("logging", {}) or {}
+        if settings.get("log_utterances", False):
+            return text
+        digest = hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
+        return f"<{len(text)} chars #{digest[:8]}>"
+
+    @classmethod
+    def sweep(cls, retention_days=None, logs_dir=None):
+        """Delete rotated log files older than the retention window.
+
+        Rotated backups (``maxie.log.1`` ...) are the bulk of what
+        accumulates on disk; the live file is rotated by the handler and
+        left alone. Returns the removed file names.
+        """
+        if retention_days is None:
+            settings = Config.system().get("logging", {}) or {}
+            retention_days = int(settings.get("retention_days", 7))
+        retention_days = int(retention_days)
+        if retention_days <= 0:
+            return []
+        if logs_dir is None:
+            logs_dir = Config.resolve("Logs")
+
+        cutoff = time.time() - (retention_days * 86400)
+        removed = []
+        try:
+            names = os.listdir(logs_dir)
+        except OSError:
+            return removed
+
+        for name in names:
+            if not name.startswith("maxie.log."):
+                continue
+            path = os.path.join(logs_dir, name)
+            try:
+                if os.path.getmtime(path) < cutoff:
+                    os.remove(path)
+                    removed.append(name)
+            except OSError:
+                continue
+        return removed
 
     def info(self, message):
         self.logger.info(self._text(message))

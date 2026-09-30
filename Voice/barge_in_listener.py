@@ -198,14 +198,14 @@ class BargeInListener:
             # legitimate interrupts.
             if not commands.leads_stop(text):
                 return False
-            self.logger.info(f"Barge-in recognized: {text}")
+            self.logger.info(f"Barge-in recognized: {self.logger.utterance(text)}")
             print("🛑 STOP command detected.")
             self.interrupted = True
             self.running = False
             self._close_stream()
             return True
 
-        self.logger.info(f"Barge-in recognized: {text}")
+        self.logger.info(f"Barge-in recognized: {self.logger.utterance(text)}")
 
         if commands.is_stop(text):
             print("🛑 STOP command detected.")

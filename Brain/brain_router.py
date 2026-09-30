@@ -69,7 +69,7 @@ class BrainRouter:
 
         intent = self.intent.classify(corrected)
 
-        self.logger.info(f"Router: '{text}' -> intent={intent}")
+        self.logger.info(f"Router: '{self.logger.utterance(text)}' -> intent={intent}")
 
         # ------------------------------------------------------------
         # Continuous learning: MAXIE quietly records preference phrases
@@ -241,7 +241,10 @@ class BrainRouter:
         to_check = (corrected or "").strip().lower()
         for prefix, prompt in self._UNKNOWN_VERB_PROMPTS:
             if to_check == prefix.strip() or to_check.startswith(prefix):
-                self.logger.info(f"Router: clarifying UNKNOWN verb phrase: {corrected}")
+                self.logger.info(
+                    "Router: clarifying UNKNOWN verb phrase: "
+                    f"{self.logger.utterance(corrected)}"
+                )
                 return prompt
         return ""
 
@@ -296,7 +299,9 @@ class BrainRouter:
             try:
                 self.memory.remember_sentence("remember that " + fact)
                 self._auto_learn_counts += 1
-                self.logger.info(f"Auto-learned: {fact}")
+                self.logger.info(
+                    f"Auto-learned: {self.logger.utterance(fact)}"
+                )
                 return fact
             except Exception as error:
                 self.logger.error(f"Auto-learn failed: {error}")

@@ -72,6 +72,11 @@ class Config:
             "max_connections": 16,
             "audit_log": False,
         },
+        "logging": {
+            # TD-17: user utterances are redacted in the log by default.
+            "log_utterances": False,
+            "retention_days": 7,
+        },
         "allow_local_power_control": False,
     }
 
@@ -154,6 +159,9 @@ class Config:
             int, 1, 100000),
         ("system", "remote_server", "max_connections"): (int, 1, 1024),
         ("system", "remote_server", "audit_log"): (bool, None, None),
+        # system.logging
+        ("system", "logging", "log_utterances"): (bool, None, None),
+        ("system", "logging", "retention_days"): (int, 0, 3650),
         # personality
         ("personality", "speech_rate"): (int, -10, 10),
         ("personality", "volume"): (int, 0, 100),

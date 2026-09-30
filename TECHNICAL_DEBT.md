@@ -12,10 +12,11 @@ from 139 to **208**. The counts below retain the original register numbering —
 closed items are annotated, not renumbered, so line references stay stable.
 
 **Status update (2026-09-30):** TD-16, TD-22, TD-23, TD-25, TD-26, TD-27 and
-TD-47 are **CLOSED**; TD-17 is **partially closed** (file now owner-only `0600`;
-the 3× plaintext utterance logging remains); TD-07/SEC-05 (unbounded bodies,
-threads and error-body detail) is **CLOSED** in the remote boundary. The suite
-sits at **341 tests, 2 skipped**. The register numbering is still preserved.
+TD-47 and TD-17 are **CLOSED** (utterances redacted to length+digest at INFO
+behind `logging.log_utterances`, log file owner-only, retention sweep added);
+TD-07/SEC-05 (unbounded bodies, threads and error-body detail) is **CLOSED** in
+the remote boundary. The suite sits at **357 tests, 2 skipped**. The register
+numbering is still preserved.
 
 Severity note: TD-08 was initially rated CRITICAL as "live token committed".
 That was **overstated** — verification showed the `remote_server.token` value in
@@ -208,10 +209,20 @@ in SQLite and pushed to the phone. `ls -la Logs/` shows `-rwxrwxrwx`.
 *Fix:* hash/length at INFO, content at DEBUG behind a flag, `chmod 0600`, add a
 retention sweep.
 
-**Status: PARTIALLY CLOSED (2026-09-30).** The log file is now forced to
-`0600` on every `Logger` construction (owner-only; the dev share ignores POSIX
-modes so the check is skipped there). The 3× plaintext utterance logging and
-the retention sweep remain open.
+**Status: CLOSED (2026-09-30).** All three parts:
+1. `0600` on every `Logger` construction (owner-only; the dev share ignores
+   POSIX modes so that check self-skips there).
+2. `Logger.utterance()` replaces plaintext with `<N chars #digest>` at the
+   three log sites (`Brain/brain_router.py` router/auto-learn/clarify lines,
+   `Voice/barge_in_listener.py` barge-in lines); plaintext only when
+   `logging.log_utterances: true` is set explicitly for debugging.
+3. `Logger.sweep()` deletes rotated `maxie.log.N` files older than
+   `logging.retention_days` (default 7) and runs once per `Maxie` start.
+
+Note the pre-existing `Logs/maxie.log` still holds the historical plaintext;
+rotate or delete it once. Covered by `Tests/logger_test.py` (11 new cases) and
+`Tests/system_test.py::LogRedactionTest`, fail-first verified against the
+pre-fix router line.
 
 ---
 

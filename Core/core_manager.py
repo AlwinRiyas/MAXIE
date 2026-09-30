@@ -21,6 +21,17 @@ class Maxie:
 
         self.config = Config.load()
 
+        # TD-17: drop rotated log files past the retention window once per
+        # process start, so an assistant that runs for months cannot fill
+        # the disk with old transcripts.
+        try:
+            swept = self.logger.sweep()
+            if swept:
+                self.logger.info(
+                    f"Log retention sweep removed {len(swept)} old file(s).")
+        except Exception as error:
+            self.logger.error(f"Log retention sweep failed: {error}")
+
         # ------------------------------------------------------
         # Voice
         # ------------------------------------------------------

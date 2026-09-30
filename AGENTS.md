@@ -19,8 +19,13 @@ phone access via HTTP endpoint). Written in Python.
   `remote_server.token` value was empty, so nothing leaked, but the exposure was
   one `git commit -a` away.
 - Tests must not mutate real user state. This was violated by
-  `Tests/tts_test.py` and was **fixed 2026-09-28** (path isolation + a guard test);
-  keep it that way when adding tests.
+  `Tests/tts_test.py` and was **fixed 2026-09-28** (path isolation + a guard test).
+  It was violated again on 2026-09-30 by `Tests/system_test.py::LogRedactionTest`
+  (auto-learn wrote a fact into the live SQLite store and `Memory/memory.json`);
+  fixed by injecting a throwaway `MemoryEngine(MemoryDatabase(tmp))` — see
+  `_isolated_memory()`. Any test that calls `BrainRouter.process()` with a
+  preference phrase needs that injection, and the leaked rows were deleted from
+  the real store.
 - Reading configuration must never write to disk. `Config/config.py:155-156`
   currently does, and a malformed file is silently overwritten with defaults.
 
@@ -163,8 +168,11 @@ commit and test evidence:**
 - **TD-16 / TD-22 / TD-23 / TD-25 / TD-26 / TD-47** lifecycle batch (Phase 18,
   2026-09-30): race-free `Logger.instance()` + `shutdown()`/flush; error-isolated,
   lock-guarded, idempotent `Maxie.shutdown()`; signal handler defers cleanup to
-  the main thread; `set_audio` re-syncs disk↔memory. **TD-17 partial**: log file
-  now owner-only `0600`; the 3× utterance logging remains.
+  the main thread; `set_audio` re-syncs disk↔memory.
+- **TD-17** plaintext utterance logging + retention (2026-09-30): `0600` log
+  file, `Logger.utterance()` logs `<N chars #digest>` unless
+  `logging.log_utterances` is set, and `Logger.sweep()` prunes rotated files
+  past `logging.retention_days`.
 - **B1** Ollama failure-string persistence (commit `bf7d978`): `_is_offline_message`
   classifies all four failure sources (connection/timeout/generic/empty) and
   nothing reaches stored context (`Tests/ai_test.py::OfflineFilteringTest`).
@@ -182,7 +190,6 @@ Still open, in priority order:
 - **TD-08** / SEC-02 — `Config/*.json` is gitignored and untracked; the token
   field is empty today. The next real token must go only into the ignored
   file, never an example.
-- **TD-17 remainder** — 3× plaintext utterance logging + retention sweep.
 - **SEC-11 remainder** — request-id correlation and any second factor for
   destructive remote commands (rate limit + audit log are in).
 - **TD-23 note** — signal-handler deferral is closed, but `run.py` still
@@ -193,7 +200,7 @@ Still open, in priority order:
 
 - A bug fix ships with a test that **fails without the fix**. Verify both
   directions before claiming it is done.
-- Never reduce the test count. Baseline is 341 passing, 2 skipped.
+- Never reduce the test count. Baseline is 357 passing, 2 skipped.
 - `python Tests/run_tests.py` and `python -m compileall -q .` must both stay
   clean at the end of every change.
 - Mark hardware-dependent results **HARDWARE UNVERIFIED** until run on the real

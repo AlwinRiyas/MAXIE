@@ -286,10 +286,11 @@ awaiting review/commit.
 - Hardware smoke test suite for the laptop — **BLOCKED**
 
 ### 18.2 Observability · **PARTIAL**
-- Structured logging; remove the 3× plaintext utterance logging — **PARTIAL** (TD-17: log file now owned by the user — owner-only `0600`; the 3× plaintext utterances remain, gated by INFO)
-- Secret/PII redaction — **MISSING**
+- Structured logging; remove the 3× plaintext utterance logging — **DONE 2026-09-30** (TD-17: `Logger.utterance()` logs `<N chars #digest>` at the router/barge-in/auto-learn sites; plaintext only behind `logging.log_utterances`)
+- Log retention sweep — **DONE 2026-09-30** (TD-17: `Logger.sweep()` prunes rotated `maxie.log.N` past `logging.retention_days`, run once per `Maxie` start)
+- Secret/PII redaction — **PARTIAL** (utterances redacted; config values and model names still land in the log)
 - **Lifecycle hygiene** — **DONE 2026-09-29**: `Logger.instance()` is race-free (TD-16), has `shutdown()`/flush (TD-47); `Maxie.shutdown()` is thread-safe with an atomic flag (TD-25), error-isolated per step (TD-22), and the signal handler defers blocking cleanup to the main thread (TD-23); `Config.set_audio` re-syncs memory↔disk (TD-26)
-- `Logs/` and `Memory/` permissions `0600` — **MISSING** (TD-17)
+- `Logs/` and `Memory/` permissions `0600` — **DONE for the log** (TD-17: chmod on every `Logger` construction); `Memory/` still untouched
 - Metrics: latency, TTS/STT timing, route distribution — **MISSING**
 - Delete unguarded `print` in dead code — **TODO** (TD-13)
 - Fix `Logger.instance()` race; add `flush()`/`shutdown()` — **MISSING** (TD-16, TD-47)

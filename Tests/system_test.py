@@ -1,7 +1,19 @@
+import json
+import os
+import tempfile
 import unittest
+from unittest import mock
 
 from Brain.brain_router import BrainRouter
 from Config.config import Config
+from Memory.memory_database import MemoryDatabase
+from Memory.memory_engine import MemoryEngine
+
+
+def _isolated_memory():
+    """A throwaway memory DB, so tests never touch the real store."""
+    path = os.path.join(tempfile.mkdtemp(), "maxie_router_test.db")
+    return MemoryEngine(MemoryDatabase(path)), path
 
 
 class _StubSkills:
@@ -220,6 +232,74 @@ class BulkDeleteConfirmationTest(unittest.TestCase):
         response = self.router.process("no do not delete all memories")
         self.assertIn("won't", response)
         self.assertFalse(self.router.command.deleted["seen"])
+
+
+class LogRedactionTest(unittest.TestCase):
+    """TD-17: an utterance routed end-to-end must not land in the log
+    in plaintext. Captures the real stdlib logger the project writes to.
+    """
+
+    SECRET = "my bank pin is 4021"
+
+    def setUp(self):
+        import logging
+
+        from Logs.logger import Logger
+
+        self.stdlib = logging.getLogger("MAXIE")
+        self.lines = []
+
+        class Capture(logging.Handler):
+            def emit(inner, record):
+                self.lines.append(record.getMessage())
+
+        self.handler = Capture()
+        self.stdlib.addHandler(self.handler)
+        self.addCleanup(self.stdlib.removeHandler, self.handler)
+
+        self.router = BrainRouter()
+        self.router.ai = mock.MagicMock()
+        self.router.ai.ask.return_value = "noted"
+        # Auto-learn writes facts; keep it out of the user's real store.
+        self.router.memory, self._db = _isolated_memory()
+        self.logger = Logger.instance()
+        self._orig_data = Config.data
+        self.addCleanup(lambda: setattr(Config, "data", self._orig_data))
+        Config.data = json.loads(json.dumps(Config.data))
+        Config.data["system"]["logging"] = {"log_utterances": False,
+                                            "retention_days": 7}
+
+    def _logged(self):
+        return "\n".join(self.lines)
+
+    def test_router_does_not_log_the_utterance(self):
+        self.router.process(self.SECRET)
+        blob = self._logged()
+        self.assertNotIn("4021", blob)
+        self.assertNotIn("bank pin", blob)
+
+    def test_router_still_logs_the_intent_and_a_correlator(self):
+        self.router.process(self.SECRET)
+        blob = self._logged()
+        self.assertIn("intent=", blob)
+        self.assertIn("chars", blob)
+
+    def test_auto_learned_fact_is_redacted(self):
+        self.router.process("i love mangoes")
+        blob = self._logged()
+        self.assertNotIn("i love mangoes", blob)
+
+    def test_facts_land_in_the_isolated_store_only(self):
+        """Auto-learn in this class must never reach the user's real
+        database — the suite is not allowed to mutate user state."""
+        self.router.process("i love mangoes")
+        self.assertTrue(self.router.memory.all(), "isolated DB not written")
+
+    def test_plaintext_returns_when_explicitly_enabled(self):
+        Config.data["system"]["logging"]["log_utterances"] = True
+        self.router.process(self.SECRET)
+        self.assertIn("4021", self._logged(),
+                      "debug opt-in must still write the words")
 
 
 class _TrackingDeleteSkills(_StubSkills):
