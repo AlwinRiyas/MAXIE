@@ -180,7 +180,7 @@ awaiting review/commit.
 ## Phase 11 — Skill system · **PARTIAL**
 
 - **11.1** `SkillManager` registry — **DONE**
-- **11.2** **Capability-based, default-deny permissions** — **MISSING** (SEC-07)
+- **11.2** **Capability-based, default-deny permissions** — **DONE 2026-09-29** (`Permissions.DESTRUCTIVE` frozenset; `requires_confirmation(intent)` capability-keyed gate in the router — a new destructive intent cannot bypass by omission) — SEC-07
 - **11.3** JSON tool schema per skill — **MISSING**
 - **11.4** Argument binding + validation — **PARTIAL**
 - **11.5** Plugin discovery via `entry_points` — **MISSING** (from OpenVoiceOS)
@@ -189,10 +189,10 @@ awaiting review/commit.
 - **11.8** Per-skill timeout and cancellation — **MISSING**
 - **11.9** Error isolation — **PARTIAL**
 - **11.10** Hot reload — **MISSING**
-- **11.11** Confirm-before-destructive — **DONE** — preserve
+- **11.11** Confirm-before-destructive — **DONE 2026-09-29** — capability-keyed; bulk memory wipe additionally gated + audited (SEC-08)
 - **11.12** AST-safe calculator — **DONE** — preserve
-- **11.13** Guarded bulk memory delete + test — **MISSING** (SEC-08)
-- **11.14** **Close the auto-learn prompt-injection channel** — **MISSING** (SEC-06)
+- **11.13** Guarded bulk memory delete + test — **DONE 2026-09-29** (SEC-08: `Permissions.BULK_DELETE_WORDS` gate, confirmation + audit line, unguarded single deletes; `TestBulkDeleteConfirmationTest`)
+- **11.14** **Close the auto-learn prompt-injection channel** — **DONE 2026-09-29** (SEC-06: quoted-speech guard on the raw transcript, per-session cap `auto_learn_session_cap`, negation guard; `AutoLearnInjectionTest`)
 
 ## Phase 12 — Agent capabilities · **MISSING**
 

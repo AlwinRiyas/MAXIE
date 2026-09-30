@@ -95,6 +95,60 @@ class AutoLearnTest(unittest.TestCase):
         self.assertNotIn("opera", combined)
 
 
+class AutoLearnInjectionTest(unittest.TestCase):
+    """SEC-06: ambient audio must not become durable preference facts.
+
+    Quoted speech, control characters, and unbounded streams of ambient
+    conversation are the prompt-injection channel; none may persist to
+    memory and be re-injected into every future system prompt."""
+
+    def fresh(self, cap=30):
+        router = BrainRouter()
+        router.memory, self.db_path = fresh_engine()
+        router.ai = mock.MagicMock()
+        router.ai.ask.return_value = "ok"
+        router._auto_learn_session_cap = cap
+        router._auto_learn_counts = 0
+        return router
+
+    def stored(self):
+        engine = MemoryEngine(MemoryDatabase(self.db_path))
+        return [f"{row['key']} {row['value']}" for row in engine.all()]
+
+    def count(self):
+        return len(self.stored())
+
+    def test_quoted_speech_is_not_learned(self):
+        router = self.fresh()
+        before = self.count()
+        router.process('she said "i like mining rigs" is what was written')
+        self.assertEqual(self.count(), before)
+
+    def test_single_quoted_preference_is_not_learned(self):
+        router = self.fresh()
+        before = self.count()
+        router.process("i prefer it because it's 'edgy'")
+        self.assertEqual(self.count(), before)
+
+    def test_session_cap_stops_learning(self):
+        router = self.fresh(cap=2)
+        router.process("i like alpha")
+        router.process("i like beta")
+        router.process("i like gamma")
+        stored = self.stored()
+        joined = " ".join(stored)
+        self.assertIn("alpha", joined)
+        self.assertIn("beta", joined)
+        self.assertNotIn("gamma", joined)
+
+    def test_plain_preference_still_learns(self):
+        router = self.fresh()
+        before = self.count()
+        router.process("i like walking in the rain")
+        self.assertEqual(self.count(), before + 1)
+        self.assertIn("walking", " ".join(self.stored()))
+
+
 class MemorySynonymRecallTest(unittest.TestCase):
 
     def test_synonym_matrix(self):

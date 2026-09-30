@@ -42,6 +42,11 @@ class BrainRouter:
         self.memory = MemoryEngine()
         self.ai = AIEngine(memory=self.memory)
         self.logger = Logger.instance()
+        from Config.config import Config
+
+        self._auto_learn_session_cap = int(
+            Config.ai_config().get("auto_learn_session_cap", 30))
+        self._auto_learn_counts = 0
 
     # ==================================================
     # PUBLIC: process text -> response string
@@ -73,7 +78,7 @@ class BrainRouter:
         # and survive reboots.
         # ------------------------------------------------------------
         if intent not in ("SAVE_MEMORY", "DELETE_MEMORY", "TODO_ADD"):
-            self._auto_learn(corrected or text)
+            self._auto_learn(corrected or text, raw=text)
 
         self.memory.add_context("user", corrected or text)
 
@@ -82,7 +87,7 @@ class BrainRouter:
         # ---------------- Confirmation-gated destructive actions ----------------
         from Security.permissions import Permissions
 
-        if intent in ("SHUTDOWN", "RESTART"):
+        if Permissions.requires_confirmation(intent) and intent != "DELETE_MEMORY":
             confirm_words = ("confirm", "yes", "yeah", "do it", "go ahead",
                              "sure", "ok")
             if any(word in corrected for word in confirm_words
@@ -117,8 +122,21 @@ class BrainRouter:
             return self.command.execute("RECALL_MEMORY", corrected)
 
         if intent == "DELETE_MEMORY":
-            if any(word in corrected for word in ("all", "everything", "memories")):
-                return self.command.execute("DELETE_MEMORY", "all")
+            from Security.permissions import Permissions
+
+            if any(word in corrected for word in Permissions.BULK_DELETE_WORDS):
+                # SEC-08: wiping everything needs explicit confirmation
+                # and an audit log line; ordinary delete stays unguarded.
+                confirm_words = ("confirm", "yes", "yeah", "do it", "go ahead",
+                                 "sure", "ok")
+                if any(word in corrected for word in confirm_words
+                       ) and "not" not in corrected:
+                    self.logger.warning(
+                        f"SEC-08: bulk memory wipe confirmed and executed: "
+                        f"{corrected}")
+                    return self.command.execute("DELETE_MEMORY", "all")
+                return (Permissions.confirmation_for("DELETE_MEMORY_BULK")
+                        or "I won't wipe all memories without confirmation.")
             return self.command.execute("DELETE_MEMORY", value)
 
         # ---------------- Greeting ----------------
@@ -231,10 +249,14 @@ class BrainRouter:
     # CONTINUOUS LEARNING (auto-captured preferences)
     # ==================================================
 
-    def _auto_learn(self, corrected):
+    def _auto_learn(self, corrected, raw=None):
         """Quietly persist preference sentences. Returns the captured
         fact or None. Used so MAXIE 'keeps learning' even when the user
         hasn't said 'remember'."""
+        if raw and self._has_delimited_quotes(raw):
+            self.logger.info(
+                "SEC-06: auto-learn blocked quoted/ambient text")
+            return None
 
         markers = (
             "i like ", "i love ", "i prefer ", "i hate ",
@@ -267,13 +289,40 @@ class BrainRouter:
 
         if not (3 <= len(fact) <= 60):
             return None
-        try:
-            self.memory.remember_sentence("remember that " + fact)
-            self.logger.info(f"Auto-learned: {fact}")
-            return fact
-        except Exception as error:
-            self.logger.error(f"Auto-learn failed: {error}")
-            return None
+
+        # Per-session cap so a long ambient conversation cannot flood the
+        # memory store (configurable via auto_learn_session_cap).
+        if self._auto_learn_counts < self._auto_learn_session_cap:
+            try:
+                self.memory.remember_sentence("remember that " + fact)
+                self._auto_learn_counts += 1
+                self.logger.info(f"Auto-learned: {fact}")
+                return fact
+            except Exception as error:
+                self.logger.error(f"Auto-learn failed: {error}")
+                return None
+        self.logger.info("SEC-06: auto-learn session cap reached; skipping")
+        return None
+
+    @staticmethod
+    def _has_delimited_quotes(text):
+        """SEC-06: True when the original transcript contains a quote
+        mark that is *not* an intra-word apostrophe ("it's", "don't").
+
+        Ambient audio that is actually quoted speech — a podcast saying
+        ``"I like mining rigs"``, a prompt-injected page read aloud —
+        surfaces quotes at word boundaries. Those must never become
+        durable preference facts, because they would be re-injected into
+        every future system prompt.
+        """
+        for i, char in enumerate(text or ""):
+            if char not in "\"'`":
+                continue
+            prev = text[i - 1] if i > 0 else " "
+            nxt = text[i + 1] if i + 1 < len(text) else " "
+            if not (prev.isalnum() and nxt.isalnum()):
+                return True
+        return False
 
     # ==================================================
     # ARGUMENT VALIDATION (Phase 8.7)

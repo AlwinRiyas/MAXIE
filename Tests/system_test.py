@@ -190,5 +190,49 @@ class ClarificationTest(unittest.TestCase):
         self.assertEqual(response, "AI said.")
 
 
+class BulkDeleteConfirmationTest(unittest.TestCase):
+    """SEC-08: wiping ALL memories requires explicit confirmation and an
+    audit line; ordinary single-item delete stays unguarded."""
+
+    def setUp(self):
+        self.router = BrainRouter()
+        self.router.command = _TrackingDeleteSkills()
+
+    def test_bulk_delete_asks_confirmation(self):
+        response = self.router.process("delete all memories")
+        self.assertIn("won't", response)
+        self.assertIn("confirm", response)
+        self.assertFalse(self.router.command.deleted["seen"], "must not delete yet")
+
+    def test_bulk_delete_executes_after_confirm(self):
+        response = self.router.process("yes delete all memories")
+        self.assertEqual(response, "deleted-all")
+        self.assertTrue(self.router.command.deleted["seen"])
+        self.assertEqual(self.router.command.deleted["value"], "all")
+
+    def test_single_memory_delete_unguarded(self):
+        response = self.router.process("delete my memory about shuttle")
+        self.assertEqual(response, "deleted-single")
+        self.assertTrue(self.router.command.deleted["seen"])
+        self.assertNotEqual(self.router.command.deleted["value"], "all")
+
+    def test_bulk_delete_confirmation_rejected_by_negation(self):
+        response = self.router.process("no do not delete all memories")
+        self.assertIn("won't", response)
+        self.assertFalse(self.router.command.deleted["seen"])
+
+
+class _TrackingDeleteSkills(_StubSkills):
+    def __init__(self):
+        self.deleted = {"seen": False, "value": None}
+
+    def execute(self, intent, value="", extra=None):
+        if intent == "DELETE_MEMORY":
+            self.deleted["seen"] = True
+            self.deleted["value"] = value
+            return "deleted-all" if value == "all" else "deleted-single"
+        return super().execute(intent, value, extra)
+
+
 if __name__ == "__main__":
     unittest.main()

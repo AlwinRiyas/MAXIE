@@ -29,6 +29,26 @@ class PermissionsTest(unittest.TestCase):
         self.assertIsNotNone(Permissions.confirmation_for("RESTART"))
         self.assertIsNone(Permissions.confirmation_for("TIME"))
 
+    def test_destructive_capability_keying(self):
+        """SEC-07: the confirmation gate is capability-keyed, so a new
+        destructive intent can't bypass it by mere omission from a
+        known-bad list."""
+        for intent in ("SHUTDOWN", "RESTART", "DELETE_MEMORY", "FORMAT"):
+            self.assertTrue(
+                Permissions.requires_confirmation(intent), intent)
+        for intent in ("TIME", "OPEN_APP", "SAVE_MEMORY", "AI_CHAT"):
+            self.assertFalse(
+                Permissions.requires_confirmation(intent), intent)
+
+    def test_confirmation_text_never_suggests_execution(self):
+        msg = Permissions.confirmation_for("DELETE_MEMORY_BULK")
+        self.assertIn("confirm delete memory bulk", msg)
+        self.assertIn("won't", msg)  # asks, never claims to have run
+
+    def test_bulk_delete_words_are_explicit(self):
+        self.assertIn("all", Permissions.BULK_DELETE_WORDS)
+        self.assertIn("everything", Permissions.BULK_DELETE_WORDS)
+
 
 if __name__ == "__main__":
     unittest.main()

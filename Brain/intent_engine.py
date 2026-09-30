@@ -164,6 +164,14 @@ class IntentEngine:
                                          "remove memory")):
             return "DELETE_MEMORY"
 
+        # Less-formal bulks ("delete all memories", "erase my history")
+        # must still route to the memory skill so the security gate can
+        # intercept the wipe (SEC-08) instead of the AI answering.
+        if any(word in text for word in (
+                "delete all", "wipe", "erase my", "erase all",
+                "clear my memory", "forget everything")):
+            return "DELETE_MEMORY"
+
         # --------------------------------------------------
         # Math
         # --------------------------------------------------

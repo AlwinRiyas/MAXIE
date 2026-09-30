@@ -42,6 +42,7 @@ class Config:
             "availability_ttl_seconds": 10.0,
             "max_context_chars": 6000,
             "max_context_row_chars": 2000,
+            "auto_learn_session_cap": 30,
         },
         "memory": {
             "conversation_cap": 500,
