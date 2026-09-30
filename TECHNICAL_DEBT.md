@@ -11,11 +11,11 @@ uncommitted state-machine WIP**; TD-31 is partially closed. Test count moved
 from 139 to **208**. The counts below retain the original register numbering —
 closed items are annotated, not renumbered, so line references stay stable.
 
-**Status update (2026-09-30):** TD-16, TD-22, TD-23, TD-25, TD-26 and TD-47 are
-**CLOSED**; TD-17 is **partially closed** (file now owner-only `0600`; the 3×
-plaintext utterance logging remains). Closing commit is the Phase 18 lifecycle
-batch; the suite sits at **326 tests, 2 skipped**. The register numbering is
-still preserved.
+**Status update (2026-09-30):** TD-16, TD-22, TD-23, TD-25, TD-26, TD-27 and
+TD-47 are **CLOSED**; TD-17 is **partially closed** (file now owner-only `0600`;
+the 3× plaintext utterance logging remains); TD-07/SEC-05 (unbounded bodies,
+threads and error-body detail) is **CLOSED** in the remote boundary. The suite
+sits at **341 tests, 2 skipped**. The register numbering is still preserved.
 
 Severity note: TD-08 was initially rated CRITICAL as "live token committed".
 That was **overstated** — verification showed the `remote_server.token` value in
@@ -285,6 +285,14 @@ unicode survives a round-trip.
 `Config/config.py:167-179`; `Core/core_manager.py:56`
 A bad `port` surfaces as a raw `ValueError` outside any `try` in `run.py:35`, so
 the user gets a traceback instead of the intended friendly message.
+
+**Status: CLOSED (2026-09-30).** `Config.SCHEMA` declares type + bounds for
+every hand-editable tunable; `Config.validate()` coerces unambiguous
+wrong-type values (`"8778"` → `8778`) and raises `ConfigError` naming the exact
+setting for anything out of range or uncoercible. `load()` calls it, and
+`run.py` turns it into one readable line plus exit code 2. Covered by
+`Tests/config_test.py::ConfigValidationTest` and `Tests/launcher_test.py`; the
+launcher cases fail against the old traceback path.
 
 ### TD-28 `BargeInListener` leaked on the exception path
 `Conversation/conversation_engine.py:366-372`

@@ -3,7 +3,7 @@ import os
 import tempfile
 import unittest
 
-from Config.config import Config
+from Config.config import Config, ConfigError
 
 
 class ConfigTest(unittest.TestCase):
@@ -155,6 +155,97 @@ class ConfigWriteSyncTest(unittest.TestCase):
         with open(self.audio_path, "r", encoding="utf-8") as f:
             text = f.read()
         self.assertIn("Mikrofon — Super Tøff", text)
+
+
+class ConfigValidationTest(unittest.TestCase):
+    """TD-27: every schema'd setting is coerced or rejected by name, so a
+    hand-edited config never surfaces as a traceback from a subsystem."""
+
+    @staticmethod
+    def _data(**remote):
+        return {
+            "system": {
+                "remote_server": {"port": 8778, "max_connections": 16,
+                                  **remote},
+                "ai": {"temperature": 0.2, "max_tokens": 150},
+            },
+            "personality": {"speech_rate": 0, "volume": 100},
+            "audio": {"sample_rate": 16000, "vad_threshold": 0.35},
+        }
+
+    def test_valid_defaults_pass(self):
+        data = self._data()
+        Config.validate(data)
+        self.assertEqual(data["system"]["remote_server"]["port"], 8778)
+
+    def test_numeric_string_is_coerced(self):
+        data = self._data()
+        data["system"]["remote_server"]["port"] = "9000"
+        data["system"]["ai"]["temperature"] = "0.7"
+        Config.validate(data)
+        self.assertEqual(data["system"]["remote_server"]["port"], 9000)
+        self.assertEqual(data["system"]["ai"]["temperature"], 0.7)
+
+    def test_bool_strings_are_coerced(self):
+        data = self._data()
+        data["system"]["remote_server"]["enabled"] = "true"
+        data["system"]["remote_server"]["audit_log"] = "no"
+        Config.validate(data)
+        self.assertIs(data["system"]["remote_server"]["enabled"], True)
+        self.assertIs(data["system"]["remote_server"]["audit_log"], False)
+
+    def test_bad_port_is_rejected_with_the_setting_name(self):
+        data = self._data()
+        data["system"]["remote_server"]["port"] = 99999
+        with self.assertRaises(ConfigError) as caught:
+            Config.validate(data)
+        message = str(caught.exception)
+        self.assertIn("remote_server.port", message)
+        self.assertIn("65535", message)
+
+    def test_uncoercible_type_is_rejected(self):
+        data = self._data()
+        data["audio"]["sample_rate"] = "sixteen thousand"
+        with self.assertRaises(ConfigError) as caught:
+            Config.validate(data)
+        self.assertIn("audio.sample_rate", str(caught.exception))
+
+    def test_bool_is_not_accepted_as_int(self):
+        data = self._data()
+        data["audio"]["channels"] = True
+        with self.assertRaises(ConfigError):
+            Config.validate(data)
+
+    def test_zero_port_is_rejected(self):
+        data = self._data()
+        data["system"]["remote_server"]["port"] = 0
+        with self.assertRaises(ConfigError):
+            Config.validate(data)
+
+    def test_out_of_range_threshold_is_rejected(self):
+        data = self._data()
+        data["audio"]["vad_threshold"] = 5.0
+        with self.assertRaises(ConfigError) as caught:
+            Config.validate(data)
+        self.assertIn("vad_threshold", str(caught.exception))
+
+    def test_load_rejects_a_malformed_setting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            system_path = os.path.join(tmp, "system.json")
+            bad = json.loads(json.dumps(Config.DEFAULT_SYSTEM))
+            bad["remote_server"]["port"] = "not-a-port"
+            with open(system_path, "w", encoding="utf-8") as f:
+                json.dump(bad, f)
+
+            orig_files = dict(Config.FILES)
+            orig_data = json.loads(json.dumps(Config.data))
+            self.addCleanup(lambda: (
+                setattr(Config, "FILES", orig_files),
+                setattr(Config, "data", orig_data),
+            ))
+            Config.FILES = {**orig_files, "system": system_path}
+            with self.assertRaises(ConfigError):
+                Config.load(force=True)
 
 
 if __name__ == "__main__":

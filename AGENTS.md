@@ -173,13 +173,16 @@ commit and test evidence:**
   `_BoundedThreadingHTTPServer` caps live request threads
   (`remote_server.max_connections`, default 16).
 
+- **TD-27** config schema validation — **CLOSED 2026-09-30**: `Config.SCHEMA`
+  (type + bounds per tunable) is enforced by `Config.validate()` inside
+  `load()`; a bad setting prints one line and exits 2 (`Tests/launcher_test.py`).
+- **B1** Ollama failure-string persistence — **CLOSED** (`bf7d978`).
+
 Still open, in priority order:
 - **TD-08** / SEC-02 — `Config/*.json` is gitignored and untracked; the token
   field is empty today. The next real token must go only into the ignored
   file, never an example.
 - **TD-17 remainder** — 3× plaintext utterance logging + retention sweep.
-- **TD-27** — no config schema validation; a bad `port` surfaces as a raw
-  traceback in `run.py`.
 - **SEC-11 remainder** — request-id correlation and any second factor for
   destructive remote commands (rate limit + audit log are in).
 - **TD-23 note** — signal-handler deferral is closed, but `run.py` still
@@ -190,7 +193,7 @@ Still open, in priority order:
 
 - A bug fix ships with a test that **fails without the fix**. Verify both
   directions before claiming it is done.
-- Never reduce the test count. Baseline is 326 passing, 2 skipped.
+- Never reduce the test count. Baseline is 341 passing, 2 skipped.
 - `python Tests/run_tests.py` and `python -m compileall -q .` must both stay
   clean at the end of every change.
 - Mark hardware-dependent results **HARDWARE UNVERIFIED** until run on the real

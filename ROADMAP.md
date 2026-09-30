@@ -309,12 +309,12 @@ awaiting review/commit.
 - `CHANGELOG.md` maintained per release — **TODO**
 
 ### 18.5 Error handling · **PARTIAL**
-- Global error boundary so a failed turn never ends the session — **MISSING**
-- `contextlib.suppress` + per-step logging in `Maxie.shutdown()` — **MISSING** (TD-22)
-- Thread-safe, idempotent shutdown — **MISSING** (TD-25)
-- Config schema validation with friendly errors — **MISSING** (TD-27)
-- Non-blocking signal handling — **MISSING** (TD-23)
-- Malformed config must not destroy user settings — **MISSING** (TD-09)
+- Global error boundary so a failed turn never ends the session — **PARTIAL** (shutdown teardown is error-isolated; a mid-turn failure is still per-call try/except)
+- `contextlib.suppress` + per-step logging in `Maxie.shutdown()` — **DONE 2026-09-30** (TD-22)
+- Thread-safe, idempotent shutdown — **DONE 2026-09-30** (TD-25, `_shutdown_lock`)
+- Config schema validation with friendly errors — **DONE 2026-09-30** (TD-27: `Config.SCHEMA` + `ConfigError` + exit code 2 from `run.py`)
+- Non-blocking signal handling — **DONE 2026-09-30** (TD-23: handler logs and defers cleanup to the main thread)
+- Malformed config must not destroy user settings — **DONE** (TD-09, `bfb49cb`: backup to `.bak`, defaults restored)
 
 ### 18.6 Concurrency · **PARTIAL**
 - One capture lock; one playback lock — **MISSING**

@@ -5,7 +5,7 @@ import sys
 # Allow running from anywhere: make the project root importable.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from Config.config import Config  # noqa: E402
+from Config.config import Config, ConfigError  # noqa: E402
 
 
 def main():
@@ -18,7 +18,15 @@ def main():
                         help="Force the console interface")
     args = parser.parse_args()
 
-    Config.load()
+    # TD-27: a hand-edited setting (a bad port, an out-of-range rate) must
+    # surface as one readable line, not a traceback from inside a subsystem.
+    try:
+        Config.load()
+    except ConfigError as error:
+        print(f"MAXIE cannot start: {error}")
+        print(f"Hint: fix the value in {Config.FILES['system']} "
+              f"or {Config.FILES['audio']}.")
+        raise SystemExit(2)
 
     from Core.core_manager import Maxie
 
@@ -32,7 +40,12 @@ def main():
             print("Hint: the GUI needs a display. Use --console instead.")
         return
 
-    assistant = Maxie()
+    try:
+        assistant = Maxie()
+    except ConfigError as error:
+        print(f"MAXIE cannot start: {error}")
+        print(f"Hint: check {Config.FILES['system']}.")
+        raise SystemExit(2)
 
     try:
         assistant.start()

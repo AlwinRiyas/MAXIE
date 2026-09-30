@@ -5,6 +5,14 @@ import shutil
 import tempfile
 
 
+class ConfigError(Exception):
+    """Raised when configuration cannot be coerced into a usable state.
+
+    Surfaces as a friendly message in ``run.py`` instead of a traceback
+    from deep inside a subsystem (TD-27).
+    """
+
+
 class Config:
     """Central configuration for MAXIE.
 
@@ -111,6 +119,61 @@ class Config:
     }
 
     # ----------------------------------------------------------
+    # Schema (TD-27)
+    #
+    # Every tunable that a hand-edit can plausibly break, as
+    # (path, python type, lower bound, upper bound). Values outside the
+    # bound are a hard error; values of the wrong type are coerced when
+    # that is unambiguous (e.g. "8778" -> 8778) and rejected otherwise.
+    # ----------------------------------------------------------
+
+    SCHEMA = {
+        # system
+        ("system", "wake_word_enabled"): (bool, None, None),
+        ("system", "auto_listen"): (bool, None, None),
+        ("system", "allow_local_power_control"): (bool, None, None),
+        # system.ai
+        ("system", "ai", "temperature"): (float, 0.0, 2.0),
+        ("system", "ai", "max_tokens"): (int, 16, 32768),
+        ("system", "ai", "num_ctx"): (int, 256, 262144),
+        ("system", "ai", "context_turns"): (int, 0, 100),
+        ("system", "ai", "retries"): (int, 0, 10),
+        ("system", "ai", "retry_delay_seconds"): (float, 0.0, 60.0),
+        ("system", "ai", "availability_ttl_seconds"): (float, 0.0, 600.0),
+        ("system", "ai", "max_context_chars"): (int, 256, 200000),
+        ("system", "ai", "max_context_row_chars"): (int, 64, 200000),
+        ("system", "ai", "auto_learn_session_cap"): (int, 0, 10000),
+        # system.memory
+        ("system", "memory", "conversation_cap"): (int, 0, 100000),
+        # system.remote_server
+        ("system", "remote_server", "enabled"): (bool, None, None),
+        ("system", "remote_server", "port"): (int, 1, 65535),
+        ("system", "remote_server", "max_voice_bytes"): (int, 1024, 1 << 30),
+        ("system", "remote_server", "max_command_bytes"): (int, 16, 1 << 24),
+        ("system", "remote_server", "rate_limit_per_minute"): (
+            int, 1, 100000),
+        ("system", "remote_server", "max_connections"): (int, 1, 1024),
+        ("system", "remote_server", "audit_log"): (bool, None, None),
+        # personality
+        ("personality", "speech_rate"): (int, -10, 10),
+        ("personality", "volume"): (int, 0, 100),
+        # audio
+        ("audio", "sample_rate"): (int, 8000, 192000),
+        ("audio", "channels"): (int, 1, 2),
+        ("audio", "block_size"): (int, 64, 8192),
+        ("audio", "vad_threshold"): (float, 0.0, 1.0),
+        ("audio", "min_speech_ms"): (int, 0, 60000),
+        ("audio", "min_silence_ms"): (int, 0, 60000),
+        ("audio", "max_seconds"): (int, 1, 3600),
+        ("audio", "pre_roll_ms"): (int, 0, 5000),
+        ("audio", "speech_wait_timeout"): (int, 1, 600),
+        ("audio", "vad_noise_ratio"): (float, 0.1, 20.0),
+        ("audio", "weak_rms_threshold"): (float, 0.0, 1.0),
+        ("audio", "barge_in_rms_threshold"): (float, 0.0, 1.0),
+        ("audio", "echo_cooldown_seconds"): (float, 0.0, 10.0),
+    }
+
+    # ----------------------------------------------------------
     # Loaded data and backward-compatible attributes
     # ----------------------------------------------------------
 
@@ -148,6 +211,8 @@ class Config:
             ),
         }
 
+        cls.validate()
+
         # Sync backward-compatible attributes.
         sys = cls.data["system"]
         person = cls.data["personality"]
@@ -161,6 +226,99 @@ class Config:
         cls.WAKE_WORD = sys.get("wake_word", "hey maxie").lower()
 
         return cls.data
+
+    # ----------------------------------------------------------
+    # Schema validation (TD-27)
+    # ----------------------------------------------------------
+
+    @classmethod
+    def validate(cls, data=None):
+        """Coerce and range-check every :attr:`SCHEMA` entry.
+
+        Wrong-type values are coerced when the intent is unambiguous
+        (``"8778"`` -> ``8778``, ``"0.5"`` -> ``0.5``, ``"true"`` ->
+        ``True``); anything that cannot be coerced, or that falls
+        outside the declared bounds, raises :class:`ConfigError` with a
+        message naming the exact setting. Callers (``run.py``) turn that
+        into a friendly one-liner instead of a traceback.
+
+        Returns the validated data. Never raises for a value that is
+        absent — defaults have already been merged in by then.
+        """
+        if data is None:
+            data = cls.data
+        if not data:
+            return data
+
+        for path, (wanted, low, high) in cls.SCHEMA.items():
+            node = data
+            for key in path[:-1]:
+                node = node.get(key) if isinstance(node, dict) else None
+                if node is None:
+                    break
+            if not isinstance(node, dict) or path[-1] not in node:
+                continue
+
+            raw = node[path[-1]]
+            value = cls._coerce(raw, wanted)
+            if value is None:
+                raise ConfigError(
+                    f"Config setting {'.'.join(path)} must be "
+                    f"{wanted.__name__}, got {raw!r}."
+                )
+            if low is not None and not (low <= value <= high):
+                raise ConfigError(
+                    f"Config setting {'.'.join(path)} must be between "
+                    f"{low} and {high}, got {value!r}."
+                )
+            node[path[-1]] = value
+
+        return data
+
+    @staticmethod
+    def _coerce(value, wanted):
+        if wanted is bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                lowered = value.strip().lower()
+                if lowered in ("true", "yes", "1", "on"):
+                    return True
+                if lowered in ("false", "no", "0", "off"):
+                    return False
+            if isinstance(value, (int, float)) and value in (0, 1):
+                return bool(value)
+            return None
+
+        # bool is a subclass of int; never let True become 1 here.
+        if isinstance(value, bool):
+            return None
+
+        if wanted is int:
+            if isinstance(value, int):
+                return value
+            if isinstance(value, float) and value.is_integer():
+                return int(value)
+            if isinstance(value, str):
+                try:
+                    return int(value.strip())
+                except ValueError:
+                    return None
+            return None
+
+        if wanted is float:
+            if isinstance(value, (int, float)):
+                return float(value)
+            if isinstance(value, str):
+                try:
+                    return float(value.strip())
+                except ValueError:
+                    return None
+            return None
+
+        if isinstance(value, wanted):
+            return value
+        return None
 
     @classmethod
     def _load_file(cls, path, defaults):
