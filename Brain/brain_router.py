@@ -12,7 +12,9 @@ from Memory.memory_engine import MemoryEngine
 # ROADMAP 12.1: the autonomy levels that exist today. "agent" is absent
 # because it needs the Phase 12.2 planner; Config and BrainRouter both
 # refuse it rather than pretend.
-ROUTING_MODES = ("controlled", "smart")
+# "agent" is legal only with ai.agent_enabled (Config refuses the pair), so
+# listing it here cannot itself widen autonomy.
+ROUTING_MODES = ("controlled", "smart", "agent")
 
 VERBS_OPEN = ("open ", "launch ", "start ", "run ")
 VERBS_CLOSE = ("close ", "kill ", "quit ", "exit app ")
@@ -69,7 +71,24 @@ class BrainRouter:
         # hand-edited value slips past, so no spelling of a future mode
         # can quietly switch autonomy on.
         mode = str(Config.ai_config().get("routing_mode", "controlled")).lower()
+        self.agent_enabled = bool(
+            Config.ai_config().get("agent_enabled", False))
+        if mode == "agent" and not self.agent_enabled:
+            # Belt and braces: Config.validate already refuses this pair at
+            # load time, but a value set in memory by a caller must not be
+            # able to skip that check.
+            self.logger.warning(
+                "routing_mode 'agent' ignored: ai.agent_enabled is not set")
+            mode = "controlled"
         self.routing_mode = mode if mode in ROUTING_MODES else "controlled"
+
+        # ROADMAP 12.3/12.5: ceilings for one goal. Both are read from
+        # config and bounded there (1-10) so an autonomous turn cannot be
+        # turned into an unbounded one by a stray value.
+        self.agent_max_iterations = int(
+            Config.ai_config().get("agent_max_iterations", 4))
+        self.agent_max_steps = int(
+            Config.ai_config().get("agent_max_steps", 4))
 
     def _propose_skill(self, question):
         """Let the model pick a skill, in the order: allowlist -> schema ->
@@ -118,6 +137,90 @@ class BrainRouter:
         #    arguments before any skill is constructed.
         self.logger.info(f"Smart-mode dispatch: {name}")
         return self.command.skills.execute_args(name, arguments)
+
+    def _run_plan(self, question):
+        """Plan, then execute, under a ceiling (ROADMAP 12.2-12.5).
+
+        The order matters and is the security property: plan (which refuses
+        non-allowlisted, destructive and schema-invalid steps) -> execute
+        (which re-checks all of it at dispatch time, under an iteration cap
+        and loop detection) -> roll back anything a later failure made
+        worth undoing.
+
+        Returns None when the model produced no usable plan, so the caller
+        falls back to a prose answer rather than a refusal the user never
+        asked for.
+        """
+        from AI.llm_planner import parse_plan, plan_prompt, PLAN_SHAPE
+        from Security.permissions import Permissions
+        from Skills.agent_executor import AgentExecutor
+
+        tools = self.command.skills.tool_schemas()
+        if not tools:
+            return None
+
+        def _validate(skill, arguments):
+            """The plan-time gate. Mirrors the executor's dispatch-time
+            check on purpose: refusing here means the plan never mentions
+            a capability the loop must not touch."""
+            if not Permissions.can_execute(skill):
+                return f"{skill} is not allowlisted"
+            if Permissions.requires_confirmation(skill):
+                return f"{skill} is destructive"
+            schema = self.command.skills.schema_for(skill)
+            if schema is None:
+                return f"{skill} has no schema"
+            try:
+                schema.validate(arguments)
+            except Exception as error:  # noqa: BLE001
+                return str(error)
+            return None
+
+        try:
+            raw = self.ai.ask_json(plan_prompt(question, tools),
+                                   schema_hint=PLAN_SHAPE)
+        except Exception as error:  # noqa: BLE001 - never break the turn
+            self.logger.warning(f"Agent planning failed: {error}")
+            return None
+
+        plan = parse_plan(raw, _validate, max_steps=self.agent_max_steps)
+        if not plan:
+            self.logger.info("Agent mode: no usable plan")
+            return None
+
+        executor = AgentExecutor(self.command.skills, self.logger,
+                                 max_iterations=self.agent_max_iterations)
+        results = executor.execute(plan)
+        summary = self._summarise_run(results)
+        if any(not result.ok for result in results):
+            rollback = executor.rollback(results)
+            if rollback["failures"]:
+                self.logger.warning(
+                    f"Agent rollback incomplete: {rollback['failures']}")
+            if rollback["reverted"]:
+                summary += " I undid the earlier steps I could."
+        return summary
+
+    def _summarise_run(self, results):
+        """Say what happened, in order, without inventing success."""
+        said = [result.describe() for result in results
+                if result.ok and result.describe()]
+        for result in results:
+            if not result.ok and result.skill not in (
+                    "AGENT_STEP_LIMIT", "AGENT_LOOP", "AGENT_NO_STEPS"):
+                said.append(f"{result.skill} didn't work: {result.error}")
+
+        stop = next((result for result in results if not result.ok), None)
+        if stop is not None and stop.skill in (
+                "AGENT_STEP_LIMIT", "AGENT_LOOP"):
+            said.append(f"I stopped there ({stop.error}).")
+
+        if not said:
+            return "I didn't manage to do anything."
+        # " " join, first letter capitalised: the parts are already
+        # sentences the skills wrote.
+        text = " ".join(said)
+        return text[0].upper() + text[1:] if text else text
 
     def bind_source(self, source):
         """Identify the caller for confirmation binding (SEC-11).
@@ -245,7 +348,15 @@ class BrainRouter:
         # against the allowlist and the intent's schema, and a
         # destructive intent still has to survive the SEC-11 gate, so the
         # model can never act on its own.
-        if self.routing_mode == "smart":
+        if self.routing_mode == "agent":
+            # 12.2: the model may chain allowlisted, schema-backed skills
+            # under a ceiling. The single-step gate in "smart" mode is a
+            # strict subset of what this checks, so nothing destructive
+            # and nothing unvalidated can run here either.
+            ran = self._run_plan(corrected)
+            if ran is not None:
+                return ran
+        elif self.routing_mode == "smart":
             proposed = self._propose_skill(corrected)
             if proposed is not None:
                 return proposed

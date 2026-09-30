@@ -194,28 +194,45 @@ awaiting review/commit.
 - **11.13** Guarded bulk memory delete + test — **DONE 2026-09-29** (SEC-08: `Permissions.BULK_DELETE_WORDS` gate, confirmation + audit line, unguarded single deletes; `TestBulkDeleteConfirmationTest`)
 - **11.14** **Close the auto-learn prompt-injection channel** — **DONE 2026-09-29** (SEC-06: quoted-speech guard on the raw transcript, per-session cap `auto_learn_session_cap`, negation guard; `AutoLearnInjectionTest`)
 
-## Phase 12 — Agent capabilities · **PARTIAL** (schema layer + smart mode)
+## Phase 12 — Agent capabilities · **PARTIAL** (bounded loop shipped; summarisation left)
 
-- **12.1** Controlled / smart / agent routing modes — **PARTIAL** (from Leon) —
-  `controlled` (default) and `smart` ship as `ai.routing_mode`; `agent` is
-  rejected by config and by the router until 12.2 exists
-- **12.2** `LLMPlanner` — **MISSING**
-- **12.3** `AgentExecutor` — **MISSING**
-- **12.4** Plan → execute → verify loop — **MISSING**
-- **12.5** Loop detection + hard iteration cap — **MISSING**
-- **12.6** Permission enforcement *inside* the loop — **MISSING** (the loop
-  does not exist; the pre-loop allowlist + destructive refusal does)
+- **12.1** Controlled / smart / agent routing modes — **DONE 2026-09-30** —
+  `controlled` (default), `smart`, and `agent` as `ai.routing_mode`. `agent`
+  needs the separate `ai.agent_enabled: true`; config refuses the pair at load
+  and the router falls back to `controlled` if a value is set in memory
+- **12.2** `LLMPlanner` — **DONE 2026-09-30** — `AI/llm_planner.py` turns a goal
+  into a validated ordered plan. One bad step discards the whole plan; a
+  repeated step is not a plan; the step count is capped before validation
+- **12.3** `AgentExecutor` — **DONE 2026-09-30** — `Skills/agent_executor.py`
+  dispatches under a ceiling and reports every step
+- **12.4** Plan → execute → verify loop — **DONE 2026-09-30** — each step's
+  outcome decides whether the next one runs; a failed step stops the run and
+  is reported, never smoothed over
+- **12.5** Loop detection + hard iteration cap — **DONE 2026-09-30** —
+  `ai.agent_max_iterations` / `ai.agent_max_steps` (1-10, bounded in config)
+  plus signature-based repeat detection at both plan and dispatch time
+- **12.6** Permission enforcement *inside* the loop — **DONE 2026-09-30** —
+  allowlist, destructive gate and schema are re-read from `Security.permissions`
+  at dispatch time, not trusted from plan time
 - **12.7** Structured tool-calling wired to skill schemas — **DONE** —
   `Skills/skill_schema.py` is the single contract: the validator and the
   Ollama tool definition are rendered from the same declaration
-- **12.8** `SkillResult` with success/failure/partial — **MISSING**
-- **12.9** Undo/rollback surface for remote actions — **MISSING**
+- **12.8** `SkillResult` with success/failure/partial — **DONE 2026-09-30** —
+  `Skills/skill_result.py`; a refusal string from a skill is read as a
+  failure, so a half-run plan is never reported as success
+- **12.9** Undo/rollback surface for remote actions — **PARTIAL 2026-09-30** —
+  `AgentExecutor.rollback()` reverts in reverse order, skips what has no
+  compensating action, stops at the first failure and reports the rollback as
+  partial. **No skill declares an undo hook yet**, so nothing is actually
+  reverted in practice — the surface exists, the surface is unused
 - **12.10** Conversation summary injected on turn N — **MISSING**
 
-Order matters here: the tool-schema layer and the routing modes came first
-and the bounded loop did not, because a loop with no argument contract and
-no explicit autonomy setting is just an unbounded way to run the wrong
-skill. 12.2-12.6 build on what is now in place.
+Order mattered here: the tool-schema layer and the routing modes came first,
+because a loop with no argument contract and no explicit autonomy setting is
+just an unbounded way to run the wrong skill. The loop shipped second, opt-in
+and capped. Two things are still honest gaps: no skill supplies a compensating
+action (12.9), and long conversations are trimmed rather than summarised
+(12.10).
 
 ## Phase 13 — Home automation · **MISSING**
 

@@ -264,6 +264,47 @@ unnecessary dynamic code execution in a startup path.
 
 ---
 
+### SEC-15 — MEDIUM — A model that can chain skills amplifies every other finding
+`AI/llm_planner.py`, `Skills/agent_executor.py`, `Brain/brain_router.py:_run_plan`
+
+Shipping a bounded agent loop (Phase 12.2-12.6) turns any weakness in a single
+skill into a repeatable multi-step capability: a prompt-injected utterance can
+now aim several allowlisted skills at one goal instead of one. The loop itself
+is the finding — it is a new privilege boundary, not a new bug.
+
+**Status: CLOSED by design (2026-09-30), with one accepted gap.** The controls,
+each with a test that fails if it is removed (`Tests/agent_test.py`, verified by
+mutation):
+
+1. **Two switches, not one.** `ai.routing_mode: "agent"` alone is refused at
+   config load; `ai.agent_enabled: true` is required as well, and the router
+   falls back to `controlled` if a value is poked into memory. Nothing is
+   autonomous in the shipped config.
+2. **Nothing destructive is reachable.** Destructive intents are never in the
+   planner's tool list, `parse_plan` refuses a plan naming one, and the executor
+   re-checks `Permissions.requires_confirmation` at dispatch time. A model
+   cannot obtain or consume a SEC-11 confirmation.
+3. **Whole-plan validation.** One failing step discards the entire plan, so a
+   rejected plan cannot execute its safe half and leave evidence of having got
+   partway.
+4. **Ceilings.** `ai.agent_max_iterations` / `ai.agent_max_steps` (1-10, bounded
+   by `Config.SCHEMA`) cap a single goal.
+5. **Loop detection.** A repeated `(skill, arguments)` stops the run at plan
+   time and again at dispatch time.
+6. **Rollback is honest.** Only steps whose skill declared a compensating action
+   are reverted, in reverse order, and a failure is reported as partial rather
+   than as a clean undo.
+
+**Accepted gap:** no skill declares a compensating action yet, so the rollback
+surface is implemented but unused (ROADMAP 12.9 stays PARTIAL). Also note the
+loop inherits SEC-06's prompt-injection exposure in full — `_auto_learn`'s
+quoted-speech guard protects the transcript, not the planner's goal string, so a
+`plan` is still built from the user's own utterance only. Any future source of
+planner input (a calendar, an email, a web page) must be re-reviewed before it
+is allowed near `plan_prompt`.
+
+---
+
 ## 4. What was probed vs. inferred
 
 | Finding | Evidence |
@@ -282,6 +323,7 @@ unnecessary dynamic code execution in a startup path.
 | TD-09 18-byte config → 603 bytes on read | **probed** |
 | Concurrency data loss in memory (7 `InterfaceError`s, 86% loss) | **probed** with a 4-thread pool |
 | Voice pipeline R1–R3 | **probed** where possible; mic/player hardware absent, so end-to-end confirmation needs the laptop |
+| SEC-15 agent loop gates | **probed by mutation** — each of the six gates was removed in turn and the corresponding test failed; a real Ollama was not consulted for plan quality |
 
 ## 5. Remediation order
 

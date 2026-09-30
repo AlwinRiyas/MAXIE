@@ -61,6 +61,18 @@ class LLMProvider(ABC):
         text = self.ask(prompt, history=history, system=system)
         return text, None
 
+    def ask_json(self, prompt, schema_hint="", history=None, system=None):
+        """Optional JSON-mode generation (ROADMAP 12.2).
+
+        Returns the model's raw JSON text, or None when the provider has no
+        JSON mode. The planner parses and validates it itself -- a
+        provider is not trusted to have produced a usable plan, and
+        "returns None" is what lets the caller fall back to a plain
+        answer instead of guessing at a broken plan.
+        """
+
+        return self.ask(prompt, history=history, system=system)
+
     @classmethod
     def from_config(cls, **overrides):
         """Build a provider from the `ai` section of Config.

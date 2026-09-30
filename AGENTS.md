@@ -118,11 +118,17 @@ Desktop/remote surfaces:
 - LLM output is NEVER executed. Execution only happens through allowlisted
   skills in `SkillManager` / `Security.permissions`.
 - `ai.routing_mode` decides how much autonomy the model has: `controlled`
-  (default — it may talk but never select a skill) or `smart` (it may
-  propose an allowlisted, schema-validated skill). `agent` is refused by
-  config and by the router until the Phase 12.2 planner exists. Destructive
-  capabilities are never offered to the model and are refused again at
-  dispatch time.
+  (default — it may talk but never select a skill), `smart` (it may propose
+  one allowlisted, schema-validated skill), or `agent` (it may plan a bounded
+  sequence). `agent` additionally requires `ai.agent_enabled: true`; config
+  refuses the pair at load and the router falls back to `controlled` if a
+  value is set in memory. Destructive capabilities are never offered to the
+  model, refused when it proposes them, and re-checked at dispatch time
+  (`Skills/agent_executor.py`), so no loop can run one.
+- An agent run is capped by `ai.agent_max_iterations` / `ai.agent_max_steps`
+  (1-10) and stops on a repeated `(skill, arguments)` or a failed step. A
+  skill only gets rolled back if it declared a compensating action; none do
+  yet, so 12.9's surface is implemented but unused.
 - Remote server binds `127.0.0.1` by default; enabling LAN access requires an
   explicit token in config. Never bind to `0.0.0.0` without a token.
 - Destructive actions (shutdown, restart) execute only after an explicit
@@ -214,7 +220,7 @@ Still open, in priority order:
 
 - A bug fix ships with a test that **fails without the fix**. Verify both
   directions before claiming it is done.
-- Never reduce the test count. Baseline is 463 passing, 2 skipped.
+- Never reduce the test count. Baseline is 529 passing, 2 skipped.
 - `python Tests/run_tests.py` and `python -m compileall -q .` must both stay
   clean at the end of every change.
 - Mark hardware-dependent results **HARDWARE UNVERIFIED** until run on the real

@@ -20,7 +20,10 @@
     "max_context_chars": 6000,
     "max_context_row_chars": 2000,
     "auto_learn_session_cap": 30,
-    "routing_mode": "controlled"
+    "routing_mode": "controlled",
+    "agent_enabled": false,
+    "agent_max_iterations": 4,
+    "agent_max_steps": 4
   },
   "memory": {
     "conversation_cap": 500

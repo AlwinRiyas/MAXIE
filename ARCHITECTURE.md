@@ -176,17 +176,30 @@ order:
 9. skills-list query
 10. memory recall
 11. greeting / help
-12. smart-mode skill proposal (`ai.routing_mode == "smart"` only)
+12. mode-specific model step: `smart` proposes one skill,
+    `agent` plans and executes a bounded sequence (both opt-in)
 13. `AIEngine.ask` fallback
 
 Consequences:
 
-- There is **no planning layer** and **no agent loop**. The LLM is a terminal
-  fallback; its output is never re-parsed into an instruction.
+- In `controlled` mode (the default) there is **no planning layer**: the LLM
+  is a terminal fallback and its output is never re-parsed into an
+  instruction.
 - In `smart` mode the model may *propose* a skill. The proposal still has to
   clear four filters before anything runs: allowlist, a declared schema,
   the schema validator, and the destructive refusal. It never reaches
   `Permissions.confirmation_for` as a confirmation.
+- In `agent` mode (needs `ai.routing_mode: "agent"` **and**
+  `ai.agent_enabled: true`) the model may return a *plan*. `AI/llm_planner.py`
+  validates every step against the allowlist, the destructive gate and the
+  schema, discarding the whole plan if any step fails. `Skills/agent_executor.py`
+  then re-checks all of that at dispatch time, under
+  `ai.agent_max_iterations`, with repeat detection on
+  `(skill, arguments)`. A failed step stops the run; steps that declared a
+  compensating action are reverted in reverse order. The model still cannot
+  select a destructive capability, consume a confirmation, or exceed the cap.
+  Nothing is autonomous by default: both settings are off in
+  `Config/system_config.json`.
 - `_auto_learn` runs on essentially every utterance (`:52`) and writes to
   persistent storage, so spoken text is an unvalidated write path.
 - Only one intent is extracted; multi-intent requests silently drop the tail.

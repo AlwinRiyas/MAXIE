@@ -211,15 +211,35 @@ class ConfigValidationTest(unittest.TestCase):
         Config.validate(data)
         self.assertEqual(data["system"]["ai"]["routing_mode"], "smart")
 
-    def test_routing_mode_rejects_agent_until_the_planner_exists(self):
+    def test_routing_mode_rejects_agent_without_the_opt_in(self):
+        """Phase 12.2 made the planner real, but 'agent' stays illegal on
+        its own: one hand-edited word must not hand the machine a chain of
+        skills."""
         data = self._data()
         data["system"]["ai"]["routing_mode"] = "agent"
         with self.assertRaises(ConfigError) as caught:
             Config.validate(data)
         message = str(caught.exception)
-        self.assertIn("controlled, smart", message)
-        self.assertIn("agent", message,
-                      "the error should say why agent is not accepted")
+        self.assertIn("agent_enabled", message,
+                      "the error should name the opt-in that is missing")
+        self.assertIn("controlled", message,
+                      "the error should name the mode to stay on instead")
+
+    def test_routing_mode_accepts_agent_with_the_opt_in(self):
+        data = self._data()
+        data["system"]["ai"]["routing_mode"] = "agent"
+        data["system"]["ai"]["agent_enabled"] = True
+        Config.validate(data)
+        self.assertEqual(data["system"]["ai"]["routing_mode"], "agent")
+
+    def test_an_odd_spelling_of_the_opt_in_is_not_truthy(self):
+        """'false' as a string must not read as enabled. Anything other
+        than a real bool is refused rather than guessed at."""
+        data = self._data()
+        data["system"]["ai"]["routing_mode"] = "agent"
+        data["system"]["ai"]["agent_enabled"] = "yes please"
+        with self.assertRaises(ConfigError):
+            Config.validate(data)
 
     def test_routing_mode_typo_is_named(self):
         data = self._data()

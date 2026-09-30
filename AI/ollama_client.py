@@ -280,6 +280,62 @@ class OllamaClient(LLMProvider):
         except requests.RequestException:
             return ""
 
+    def ask_json(self, prompt, schema_hint="", history=None, system=None):
+        """Ask for JSON and return the raw text (ROADMAP 12.2).
+
+        Ollama's `format: json` mode constrains the *shape* of the reply,
+        not its meaning, so the result is still untrusted input: the
+        planner parses it and validates every step. A fenced ```json
+        block is accepted too, because a model that ignored the format
+        hint is still easier to salvage than to reject outright.
+        """
+        _load_requests()
+        instruction = (
+            "Reply with a single JSON value and nothing else. No prose, "
+            "no markdown fence. The value must match this shape: "
+            f"{schema_hint}"
+        ).strip()
+
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        for entry in (history or []):
+            messages.append({
+                "role": "user" if entry.get("role") == "user" else "assistant",
+                "content": entry.get("content", ""),
+            })
+        messages.append({"role": "user", "content": f"{instruction}\n\n{prompt}"})
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            "format": "json",
+            "options": {
+                "temperature": self.temperature,
+                "num_predict": self.max_tokens,
+                "num_ctx": self.num_ctx,
+            },
+        }
+        try:
+            response = requests.post(
+                self.chat_url, json=payload, timeout=self.timeout
+            )
+            response.raise_for_status()
+        except requests.RequestException:
+            return None
+
+        try:
+            text = response.json().get("message", {}).get("content", "")
+        except ValueError:
+            return None
+        text = (text or "").strip()
+        if text.startswith("```"):
+            # Strip a markdown fence, keeping only the body.
+            body = text.split("\n", 1)[-1]
+            text = body.rsplit("```", 1)[0].strip()
+        return text or None
+
     @staticmethod
     def system_prompt():
         """Base system prompt (before personality injection)."""

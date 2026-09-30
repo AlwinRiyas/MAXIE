@@ -27,6 +27,65 @@ def _requests_post(**kwargs):
     return mock.patch.object(ollama_client.requests, "post", **kwargs)
 
 
+class AskJsonTest(unittest.TestCase):
+    """JSON-mode generation for the planner (12.2)."""
+
+    def setUp(self):
+        self.client = OllamaClient(base_url="http://localhost:11434")
+
+    def test_json_mode_is_requested(self):
+        with _requests_post(return_value=_Response(json_data={
+                "message": {"content": '{"steps": []}'}})) as post:
+            self.assertEqual(self.client.ask_json("plan this"),
+                             '{"steps": []}')
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["format"], "json")
+
+    def test_a_markdown_fence_is_stripped(self):
+        with _requests_post(return_value=_Response(json_data={
+                "message": {"content":
+                            '```json\n{"steps": [{"skill": "TIME", "'
+                            '"arguments": {}}]}\n```'}})):
+            text = self.client.ask_json("plan this")
+        self.assertEqual(text, '{"steps": [{"skill": "TIME", "'
+                         '"arguments": {}}]}')
+
+    def test_a_connection_failure_returns_none_not_prose(self):
+        """None means "no plan"; anything else would be parsed as one."""
+        with _requests_post(side_effect=RequestsConnectionError("refused")):
+            self.assertIsNone(self.client.ask_json("plan this"))
+
+    def test_a_non_json_body_returns_none(self):
+        with _requests_post(return_value=_Response(json_data={"oops": 1})):
+            self.assertIsNone(self.client.ask_json("plan this"))
+
+    def test_an_empty_reply_returns_none(self):
+        with _requests_post(return_value=_Response(json_data={
+                "message": {"content": "   "}})):
+            self.assertIsNone(self.client.ask_json("plan this"))
+
+    def test_the_schema_hint_reaches_the_model(self):
+        with _requests_post(return_value=_Response(json_data={
+                "message": {"content": "{}"}})) as post:
+            self.client.ask_json("plan this", schema_hint='{"steps": []}')
+        sent = post.call_args.kwargs["json"]["messages"][-1]["content"]
+        self.assertIn('{"steps": []}', sent)
+
+    def test_a_provider_without_json_mode_degrades_to_prose(self):
+        """The base implementation must not hand the planner a sentence it
+        will fail to parse as an error the user can see."""
+        from AI.llm_provider import LLMProvider
+
+        class _Plain(LLMProvider):
+            def ask(self, prompt, history=None, system=None):
+                return "I opened brave."
+
+            def is_available(self):
+                return True
+
+        self.assertEqual(_Plain().ask_json("plan this"), "I opened brave.")
+
+
 class _Response:
     def __init__(self, status=200, json_data=None):
         self.status_code = status

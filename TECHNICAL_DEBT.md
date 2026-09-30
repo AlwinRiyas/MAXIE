@@ -15,7 +15,7 @@ closed items are annotated, not renumbered, so line references stay stable.
 TD-47 and TD-17 are **CLOSED** (utterances redacted to length+digest at INFO
 behind `logging.log_utterances`, log file owner-only, retention sweep added);
 TD-07/SEC-05 (unbounded bodies, threads and error-body detail) is **CLOSED** in
-the remote boundary. The suite sits at **463 tests, 2 skipped**. The register
+the remote boundary. The suite sits at **529 tests, 2 skipped**. The register
 numbering is still preserved.
 
 Severity note: TD-08 was initially rated CRITICAL as "live token committed".

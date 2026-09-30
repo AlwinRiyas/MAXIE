@@ -58,6 +58,9 @@ class Config:
             # accepted: it needs the Phase 12.2 planner, so a config
             # naming it fails loudly instead of silently downgrading.
             "routing_mode": "controlled",
+            "agent_enabled": False,
+            "agent_max_iterations": 4,
+            "agent_max_steps": 4,
         },
         "memory": {
             "conversation_cap": 500,
@@ -159,6 +162,9 @@ class Config:
         ("system", "ai", "max_context_row_chars"): (int, 64, 200000),
         ("system", "ai", "auto_learn_session_cap"): (int, 0, 10000),
         ("system", "ai", "routing_mode"): (str, None, None),
+        ("system", "ai", "agent_enabled"): (bool, None, None),
+        ("system", "ai", "agent_max_iterations"): (int, 1, 10),
+        ("system", "ai", "agent_max_steps"): (int, 1, 10),
         # system.memory
         ("system", "memory", "conversation_cap"): (int, 0, 100000),
         # system.remote_server
@@ -197,15 +203,15 @@ class Config:
     # SCHEMA so a typo is a one-line config error naming the legal values
     # instead of a mode nobody implements silently taking over.
     CHOICES = {
-        ("system", "ai", "routing_mode"): ("controlled", "smart"),
+        ("system", "ai", "routing_mode"): ("controlled", "smart", "agent"),
     }
 
     # Appended to the CHOICES error so the message says *why* a legal-looking
     # value is not accepted yet.
     CHOICE_NOTES = {
         ("system", "ai", "routing_mode"):
-            " ('agent' mode needs the Phase 12.2 planner, which is not "
-            "implemented yet)",
+            " ('agent' mode also needs ai.agent_enabled: true, and is "
+            "refused unless it is set)",
     }
 
     # ----------------------------------------------------------
@@ -314,6 +320,22 @@ class Config:
                     f"{cls.CHOICE_NOTES.get(path, '')}"
                 )
             node[path[-1]] = value
+
+        # Cross-field rule, checked here so the refusal happens at load
+        # time with one readable line rather than as a surprise at the
+        # first autonomous turn. "agent" stays illegal unless the operator
+        # also flipped the separate opt-in, so a single hand-edited word
+        # cannot hand the machine more autonomy.
+        system = data.get("system") if isinstance(data, dict) else None
+        ai = system.get("ai") if isinstance(system, dict) else None
+        if isinstance(ai, dict) and ai.get("routing_mode") == "agent" \
+                and not ai.get("agent_enabled"):
+            raise ConfigError(
+                "Config setting ai.routing_mode 'agent' also requires "
+                "ai.agent_enabled: true. Leave ai.routing_mode as "
+                "'controlled' unless you want the model to chain several "
+                "skills on its own."
+            )
 
         return data
 
