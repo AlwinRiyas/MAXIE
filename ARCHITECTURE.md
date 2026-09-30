@@ -176,15 +176,37 @@ order:
 9. skills-list query
 10. memory recall
 11. greeting / help
-12. `AIEngine.ask` fallback
+12. smart-mode skill proposal (`ai.routing_mode == "smart"` only)
+13. `AIEngine.ask` fallback
 
 Consequences:
 
 - There is **no planning layer** and **no agent loop**. The LLM is a terminal
-  fallback; its output is never re-parsed and never dispatched to a skill.
+  fallback; its output is never re-parsed into an instruction.
+- In `smart` mode the model may *propose* a skill. The proposal still has to
+  clear four filters before anything runs: allowlist, a declared schema,
+  the schema validator, and the destructive refusal. It never reaches
+  `Permissions.confirmation_for` as a confirmation.
 - `_auto_learn` runs on essentially every utterance (`:52`) and writes to
   persistent storage, so spoken text is an unvalidated write path.
 - Only one intent is extracted; multi-intent requests silently drop the tail.
+
+### 4.0 Skill argument contracts
+
+`Skills/skill_schema.py` holds one `SkillSchema` per allowlisted intent: the
+argument names, types, required-ness, enums, bounds, and which one is the
+primary value the existing single-string skill interface wants. It is the
+only place that knowledge exists, rendered two ways:
+
+- `SkillManager.execute_args(intent, arguments)` validates a dict against it
+  and dispatches the primary argument;
+- `SkillSchema.to_ollama_tool()` renders the same declaration as an Ollama
+  tool definition for `smart` mode.
+
+Unknown argument names are rejected rather than forwarded, so a model cannot
+smuggle a field past a skill that reads one. `tool_schemas()` filters twice:
+allowlisted intents only, and destructive intents never (the router would
+refuse them anyway, so advertising them only invites a wasted turn).
 
 ### 4.1 AI
 

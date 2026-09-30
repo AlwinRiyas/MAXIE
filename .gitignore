@@ -12,6 +12,8 @@ barge_in.wav
 .cache/
 
 *.log
+*.log.*
+Logs/*.log*
 
 .idea/
 

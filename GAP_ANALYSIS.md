@@ -210,12 +210,15 @@ LLM can *call* skills rather than only answer in prose.
 
 | Target | Current | Status |
 |---|---|---|
-| Agent mode | None | **MISSING** |
+| Agent mode | None | **MISSING** — `agent` is refused by config and by the router, not silently downgraded |
+| Routing modes | `ai.routing_mode`: `controlled` (default) / `smart` | **PARTIAL** — the third mode needs the planner |
 | Plan → execute → verify loop | None | **MISSING** |
 | `LLMPlanner` | None | **MISSING** |
 | `AgentExecutor` | None | **MISSING** |
 | Loop detection / max iterations | None | **MISSING** |
-| Permission enforcement inside the loop | N/A | **MISSING** |
+| Permission enforcement inside the loop | N/A | **MISSING** (pre-loop allowlist + destructive refusal do exist) |
+| Tool schemas | `Skills/skill_schema.py`, one per allowlisted intent | **DONE** |
+| Structured tool-calling | `OllamaClient.ask_with_tools` -> allowlist -> schema -> dispatch | **DONE** |
 | Optional LLM fallback for unclear commands | Always the fallback | **PARTIAL** — no plan-first mode |
 
 Gap: this is the largest single functional gap. MAXIE's LLM can only ever

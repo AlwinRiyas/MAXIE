@@ -71,27 +71,53 @@ class AIEngine:
         return self.client.is_available()
 
     def ask(self, question):
+        answer, _call = self.ask_with_tools(question, None)
+        return answer
+
+    def ask_with_tools(self, question, tools):
+        """Ask, optionally offering tool definitions (ROADMAP 12.7).
+
+        Returns ``(answer, tool_call)``. With ``tools=None`` this is
+        exactly :meth:`ask` plus a ``None`` call, so the controlled mode
+        path is unchanged.
+
+        A returned call is still only a *proposal*: it is not stored, not
+        spoken, and not executed here. The router decides.
+        """
         if not question.strip():
-            return "I didn't catch that."
+            return "I didn't catch that.", None
 
         if not self._probe_available or time.monotonic() >= self._probe_at:
             self._probe_available = self.client.is_available()
             self._probe_at = time.monotonic() + self.availability_ttl
             if not self._probe_available:
-                return CONNECTION_ERROR_MESSAGE
+                return CONNECTION_ERROR_MESSAGE, None
 
         history = self._apply_budget(self.memory.get_context())
         system = self._build_system_prompt()
 
-        raw = self.client.ask(question, history=history, system=system)
+        call = None
+        if tools:
+            raw, call = self.client.ask_with_tools(
+                question, tools, history=history, system=system)
+        else:
+            raw = self.client.ask(question, history=history, system=system)
 
         answer = self.clean_response(raw) or _UNAVAILABLE_RESPONSE
 
         if not self._is_offline_message(answer):
             self.memory.add_context("user", question)
-            self.memory.add_context("assistant", answer)
+            if answer:
+                self.memory.add_context("assistant", answer)
 
-        return answer
+        if call is not None:
+            # Name only: the proposed arguments can contain whatever the
+            # user said, so they stay out of the log (TD-17).
+            self.logger.info(
+                f"AI: model proposed the {call[0]} skill "
+                f"({len(call[1])} argument(s))")
+
+        return answer, call
 
     def _apply_budget(self, history):
         """Bound the context payload (ROADMAP 9.6).

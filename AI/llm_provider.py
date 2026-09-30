@@ -44,6 +44,23 @@ class LLMProvider(ABC):
         Implementations should fail fast (a few seconds) and never raise.
         """
 
+    def ask_with_tools(self, prompt, tools, history=None, system=None):
+        """Optional structured tool-calling (ROADMAP 12.7).
+
+        Returns ``(text, tool_call)`` where ``tool_call`` is ``None`` or a
+        ``(name, arguments)`` pair. Not abstract on purpose: a provider
+        without tool support returns ``None`` for the call, which the
+        router treats as "answer in prose", so adding tool-calling to one
+        provider never breaks the others.
+
+        The pair is a *proposal*. The caller validates the name against
+        the allowlist and the arguments against the intent's schema
+        before anything runs.
+        """
+
+        text = self.ask(prompt, history=history, system=system)
+        return text, None
+
     @classmethod
     def from_config(cls, **overrides):
         """Build a provider from the `ai` section of Config.

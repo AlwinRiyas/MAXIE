@@ -194,18 +194,28 @@ awaiting review/commit.
 - **11.13** Guarded bulk memory delete + test — **DONE 2026-09-29** (SEC-08: `Permissions.BULK_DELETE_WORDS` gate, confirmation + audit line, unguarded single deletes; `TestBulkDeleteConfirmationTest`)
 - **11.14** **Close the auto-learn prompt-injection channel** — **DONE 2026-09-29** (SEC-06: quoted-speech guard on the raw transcript, per-session cap `auto_learn_session_cap`, negation guard; `AutoLearnInjectionTest`)
 
-## Phase 12 — Agent capabilities · **MISSING**
+## Phase 12 — Agent capabilities · **PARTIAL** (schema layer + smart mode)
 
-- **12.1** Controlled / smart / agent routing modes — **MISSING** (from Leon)
+- **12.1** Controlled / smart / agent routing modes — **PARTIAL** (from Leon) —
+  `controlled` (default) and `smart` ship as `ai.routing_mode`; `agent` is
+  rejected by config and by the router until 12.2 exists
 - **12.2** `LLMPlanner` — **MISSING**
 - **12.3** `AgentExecutor` — **MISSING**
 - **12.4** Plan → execute → verify loop — **MISSING**
 - **12.5** Loop detection + hard iteration cap — **MISSING**
-- **12.6** Permission enforcement *inside* the loop — **MISSING**
-- **12.7** Structured tool-calling wired to skill schemas — **MISSING**
+- **12.6** Permission enforcement *inside* the loop — **MISSING** (the loop
+  does not exist; the pre-loop allowlist + destructive refusal does)
+- **12.7** Structured tool-calling wired to skill schemas — **DONE** —
+  `Skills/skill_schema.py` is the single contract: the validator and the
+  Ollama tool definition are rendered from the same declaration
 - **12.8** `SkillResult` with success/failure/partial — **MISSING**
 - **12.9** Undo/rollback surface for remote actions — **MISSING**
 - **12.10** Conversation summary injected on turn N — **MISSING**
+
+Order matters here: the tool-schema layer and the routing modes came first
+and the bounded loop did not, because a loop with no argument contract and
+no explicit autonomy setting is just an unbounded way to run the wrong
+skill. 12.2-12.6 build on what is now in place.
 
 ## Phase 13 — Home automation · **MISSING**
 

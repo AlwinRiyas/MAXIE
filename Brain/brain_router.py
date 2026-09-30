@@ -9,6 +9,11 @@ from Config.config import Config
 from Logs.logger import Logger
 from Memory.memory_engine import MemoryEngine
 
+# ROADMAP 12.1: the autonomy levels that exist today. "agent" is absent
+# because it needs the Phase 12.2 planner; Config and BrainRouter both
+# refuse it rather than pretend.
+ROUTING_MODES = ("controlled", "smart")
+
 VERBS_OPEN = ("open ", "launch ", "start ", "run ")
 VERBS_CLOSE = ("close ", "kill ", "quit ", "exit app ")
 VERBS_SEARCH = ("search for ", "search ", "look up ", "google ")
@@ -58,6 +63,61 @@ class BrainRouter:
         self._confirm_ttl = float(
             Config.remote_config().get("confirm_ttl_seconds", 60))
         self._confirm_source = None
+
+        # ROADMAP 12.1: "controlled" (default) or "smart". Config rejects
+        # anything else, and the router falls back to the safest mode if a
+        # hand-edited value slips past, so no spelling of a future mode
+        # can quietly switch autonomy on.
+        mode = str(Config.ai_config().get("routing_mode", "controlled")).lower()
+        self.routing_mode = mode if mode in ROUTING_MODES else "controlled"
+
+    def _propose_skill(self, question):
+        """Let the model pick a skill, in the order: allowlist -> schema ->
+        SEC-11 gate -> dispatch. Returns None when nothing should run, so
+        the caller falls back to a prose answer.
+
+        Every branch that is not an execution returns None rather than an
+        error string: a rejected or unparsable proposal should read as a
+        normal conversational turn, not as a refusal the user never asked
+        for.
+        """
+        from Security.permissions import Permissions
+
+        try:
+            tools = self.command.skills.tool_schemas()
+            _answer, call = self.ai.ask_with_tools(question, tools)
+        except Exception as error:  # noqa: BLE001 - never break the turn
+            self.logger.warning(f"Smart-mode proposal failed: {error}")
+            return None
+
+        if not call:
+            return None
+
+        name, arguments = call
+        # 1. Allowlist. A model cannot reach a capability by inventing a
+        #    name; only Permissions decides what may run.
+        if not Permissions.can_execute(name):
+            self.logger.warning(
+                f"Smart-mode proposal refused: {name} is not allowlisted")
+            return None
+        if self.command.skills.schema_for(name) is None:
+            self.logger.warning(
+                f"Smart-mode proposal refused: {name} has no schema")
+            return None
+
+        # 2. Destructive intents keep the human gate, unchanged and
+        #    outside the model's reach. The proposal is dropped: asking
+        #    for shutdown must never be something a model can do.
+        if Permissions.requires_confirmation(name):
+            self.logger.warning(
+                f"Smart-mode proposal refused: {name} is destructive and "
+                "needs the user's own words")
+            return None
+
+        # 3. Validate, then dispatch. execute_args refuses malformed
+        #    arguments before any skill is constructed.
+        self.logger.info(f"Smart-mode dispatch: {name}")
+        return self.command.skills.execute_args(name, arguments)
 
     def bind_source(self, source):
         """Identify the caller for confirmation binding (SEC-11).
@@ -179,6 +239,17 @@ class BrainRouter:
             return clarification
 
         # ---------------- Conversational AI ----------------
+        # ROADMAP 12.1/12.7: in "smart" mode the model may *propose* an
+        # allowlisted, schema-backed skill. In "controlled" mode (the
+        # default) it may only talk. Either way the proposal is validated
+        # against the allowlist and the intent's schema, and a
+        # destructive intent still has to survive the SEC-11 gate, so the
+        # model can never act on its own.
+        if self.routing_mode == "smart":
+            proposed = self._propose_skill(corrected)
+            if proposed is not None:
+                return proposed
+
         answer = self.ai.ask(corrected)
         return answer
 

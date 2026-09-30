@@ -19,7 +19,8 @@
     "availability_ttl_seconds": 10.0,
     "max_context_chars": 6000,
     "max_context_row_chars": 2000,
-    "auto_learn_session_cap": 30
+    "auto_learn_session_cap": 30,
+    "routing_mode": "controlled"
   },
   "memory": {
     "conversation_cap": 500

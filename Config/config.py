@@ -51,6 +51,13 @@ class Config:
             "max_context_chars": 6000,
             "max_context_row_chars": 2000,
             "auto_learn_session_cap": 30,
+            # ROADMAP 12.1: how much autonomy the LLM is given.
+            # "controlled" = the model may talk but never select a skill
+            # (today's behaviour). "smart" = the model may propose a
+            # schema-validated, allowlisted skill call. "agent" is not
+            # accepted: it needs the Phase 12.2 planner, so a config
+            # naming it fails loudly instead of silently downgrading.
+            "routing_mode": "controlled",
         },
         "memory": {
             "conversation_cap": 500,
@@ -151,6 +158,7 @@ class Config:
         ("system", "ai", "max_context_chars"): (int, 256, 200000),
         ("system", "ai", "max_context_row_chars"): (int, 64, 200000),
         ("system", "ai", "auto_learn_session_cap"): (int, 0, 10000),
+        ("system", "ai", "routing_mode"): (str, None, None),
         # system.memory
         ("system", "memory", "conversation_cap"): (int, 0, 100000),
         # system.remote_server
@@ -183,6 +191,21 @@ class Config:
         ("audio", "weak_rms_threshold"): (float, 0.0, 1.0),
         ("audio", "barge_in_rms_threshold"): (float, 0.0, 1.0),
         ("audio", "echo_cooldown_seconds"): (float, 0.0, 10.0),
+    }
+
+    # Settings that accept only one of a fixed set of words. Kept beside
+    # SCHEMA so a typo is a one-line config error naming the legal values
+    # instead of a mode nobody implements silently taking over.
+    CHOICES = {
+        ("system", "ai", "routing_mode"): ("controlled", "smart"),
+    }
+
+    # Appended to the CHOICES error so the message says *why* a legal-looking
+    # value is not accepted yet.
+    CHOICE_NOTES = {
+        ("system", "ai", "routing_mode"):
+            " ('agent' mode needs the Phase 12.2 planner, which is not "
+            "implemented yet)",
     }
 
     # ----------------------------------------------------------
@@ -282,6 +305,13 @@ class Config:
                 raise ConfigError(
                     f"Config setting {'.'.join(path)} must be between "
                     f"{low} and {high}, got {value!r}."
+                )
+            allowed = cls.CHOICES.get(path)
+            if allowed is not None and value not in allowed:
+                raise ConfigError(
+                    f"Config setting {'.'.join(path)} must be one of "
+                    f"{', '.join(allowed)}, got {value!r}."
+                    f"{cls.CHOICE_NOTES.get(path, '')}"
                 )
             node[path[-1]] = value
 

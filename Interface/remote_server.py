@@ -23,6 +23,7 @@ import inspect
 import json
 import os
 import secrets
+import socket
 import tempfile
 import threading
 import time
@@ -128,12 +129,38 @@ class _BoundedThreadingHTTPServer(ThreadingHTTPServer):
                 self._active -= 1
 
     def _shed(self, request):
+        """Refuse an over-ceiling connection, and be sure the client hears
+        about it.
+
+        Closing the socket straight after a 503 can reach the client as a
+        connection reset instead, because a client that is still sending
+        a request body sees the close as a broken pipe and gives up
+        before it ever reads the response. The phone then reports "the
+        laptop is unreachable" rather than "MAXIE is busy", which sends
+        the user looking at the wrong problem.
+
+        The refusal is written, then the write side is shut down (a clean
+        half-close that flushes what we sent) before the socket is closed.
+        No request is read and no skill is reached, so this is not a way
+        to make the server do work for free.
+
+        A client that is still streaming its request body can still see
+        the close as a reset rather than reading the 503, because the
+        unread bytes turn the close into an RST. Both outcomes are a
+        refusal; the 503 is the better one, and is what a client that has
+        finished sending actually sees.
+        """
         try:
             request.sendall(
                 b"HTTP/1.1 503 Service Unavailable\r\n"
                 b"Content-Length: 0\r\n"
+                b"Retry-After: 1\r\n"
                 b"Connection: close\r\n\r\n"
             )
+        except OSError:
+            pass
+        try:
+            request.shutdown(socket.SHUT_WR)
         except OSError:
             pass
         try:

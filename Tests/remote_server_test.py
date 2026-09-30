@@ -305,8 +305,10 @@ class RemoteServerTest(unittest.TestCase):
     def test_connection_ceiling_sheds_beyond_limit(self):
         release = threading.Event()
         started = threading.Event()
+        serviced = []
 
         def slow(text):
+            serviced.append(text)
             started.set()
             release.wait(5)
             return self._future_response("ok")
@@ -328,9 +330,22 @@ class RemoteServerTest(unittest.TestCase):
         self.assertTrue(started.wait(5), "slow handler never started")
         self.assertEqual(self._drain(httpd, 2), 2, "ceiling never saturated")
 
-        # A third concurrent connection is shed, not serviced.
-        code, _ = self._request("POST", port, "/command", {"text": "hi"})
-        self.assertEqual(code, 503)
+        # A third concurrent connection is shed, not serviced. It may
+        # arrive as a 503 or as a connection reset: a client still
+        # sending its body sees the close before it can read the reply,
+        # and the unread bytes turn that close into an RST. The property
+        # under test is that the request never reaches a handler.
+        try:
+            code, _ = self._request("POST", port, "/command", {"text": "shed"})
+        except (urllib.error.URLError, OSError):
+            pass  # reset: also a refusal
+        else:
+            self.assertEqual(code, 503, "a shed request must not be 200")
+
+        self.assertNotIn("shed", serviced,
+                         "the shed request must never reach a handler")
+        self.assertEqual(sorted(serviced), ["hi", "hi"],
+                         "only the two saturating requests are serviced")
 
         release.set()
         for thread in threads:
@@ -414,6 +429,31 @@ class RemoteServerTest(unittest.TestCase):
         code, payload = self._request("POST", port, "/command", {"text": "hi"})
         self.assertEqual(code, 200)
         self.assertEqual(payload["response"], "ok")
+
+    def test_shed_writes_a_503_before_closing(self):
+        """The refusal itself, tested without a socket race: whatever the
+        client ends up seeing, the bytes MAXIE sends say 503."""
+        import socket
+
+        from Interface.remote_server import _BoundedThreadingHTTPServer
+
+        left, right = socket.socketpair()
+        try:
+            httpd = _BoundedThreadingHTTPServer.__new__(
+                _BoundedThreadingHTTPServer)
+            httpd._shed(left)
+            right.settimeout(5)
+            data = b""
+            while b"\r\n\r\n" not in data:
+                chunk = right.recv(1024)
+                if not chunk:
+                    break
+                data += chunk
+            self.assertIn(b"503 Service Unavailable", data)
+            self.assertIn(b"Connection: close", data)
+        finally:
+            left.close()
+            right.close()
 
     def test_ceiling_does_not_reject_sequential_requests(self):
         config = {"max_connections": 1, "rate_limit_per_minute": 10000}

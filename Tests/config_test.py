@@ -199,6 +199,35 @@ class ConfigValidationTest(unittest.TestCase):
         with self.assertRaises(ConfigError):
             Config.validate(self._data(confirm_ttl_seconds=100000))
 
+    def test_routing_mode_defaults_to_controlled(self):
+        # ROADMAP 12.1: the model must not be able to select a skill
+        # unless the user asked for that autonomy.
+        self.assertEqual(
+            Config.DEFAULT_SYSTEM["ai"]["routing_mode"], "controlled")
+
+    def test_routing_mode_accepts_smart(self):
+        data = self._data()
+        data["system"]["ai"]["routing_mode"] = "smart"
+        Config.validate(data)
+        self.assertEqual(data["system"]["ai"]["routing_mode"], "smart")
+
+    def test_routing_mode_rejects_agent_until_the_planner_exists(self):
+        data = self._data()
+        data["system"]["ai"]["routing_mode"] = "agent"
+        with self.assertRaises(ConfigError) as caught:
+            Config.validate(data)
+        message = str(caught.exception)
+        self.assertIn("controlled, smart", message)
+        self.assertIn("agent", message,
+                      "the error should say why agent is not accepted")
+
+    def test_routing_mode_typo_is_named(self):
+        data = self._data()
+        data["system"]["ai"]["routing_mode"] = "smrt"
+        with self.assertRaises(ConfigError) as caught:
+            Config.validate(data)
+        self.assertIn("system.ai.routing_mode", str(caught.exception))
+
     def test_confirm_ttl_is_coerced_from_a_numeric_string(self):
         data = self._data(confirm_ttl_seconds="45")
         Config.validate(data)

@@ -1,4 +1,5 @@
 from Security.permissions import Permissions
+from Skills.skill_schema import SKILL_SCHEMAS, SchemaError
 
 
 class SkillManager:
@@ -32,6 +33,66 @@ class SkillManager:
             module = __import__(module, fromlist=[class_name])
             setattr(self, name, getattr(module, class_name)())
         return getattr(self, name)
+
+    # ----------------------------------------------------------
+    # Argument contracts (ROADMAP 12.7)
+    # ----------------------------------------------------------
+
+    @staticmethod
+    def schema_for(intent):
+        """The declarative argument contract for ``intent``, or None."""
+        return SKILL_SCHEMAS.get(intent)
+
+    @staticmethod
+    def tool_schemas():
+        """Tool definitions the model is allowed to see.
+
+        Two filters, both deliberate:
+
+        - only allowlisted intents, so offering a tool can never widen
+          what MAXIE is permitted to do;
+        - no destructive intents. The router would refuse them anyway,
+          so advertising SHUTDOWN to a model only invites it to try, and
+          spends tokens. The refusal path stays as defence in depth,
+          because a model can still emit a tool it was never offered.
+        """
+        return [
+            schema.to_ollama_tool()
+            for intent, schema in SKILL_SCHEMAS.items()
+            if Permissions.can_execute(intent)
+            and not Permissions.requires_confirmation(intent)
+        ]
+
+    def execute_args(self, intent, arguments):
+        """Validate named arguments against the intent's schema, then
+        dispatch the primary one as the skill's usual string value.
+
+        Returns the skill's response, or a caller-facing refusal when the
+        arguments do not satisfy the contract. Validation happens before
+        the allowlist check is even needed, and never after dispatch, so a
+        malformed call cannot half-run.
+        """
+        if not Permissions.can_execute(intent):
+            return Permissions.confirmation_for(intent) or (
+                f"I'm not allowed to do that ({intent}).")
+
+        schema = self.schema_for(intent)
+        if schema is None:
+            return "I don't know how to do that yet."
+
+        try:
+            value = schema.primary_value(arguments)
+        except SchemaError as error:
+            self._logger().warning(f"Skill schema rejected: {error}")
+            return f"I need to be clearer about that: {error}"
+
+        return self.execute(intent, value)
+
+    @staticmethod
+    def _logger():
+        from Logs.logger import Logger
+
+        return Logger.instance()
 
     def execute(self, intent, value="", extra=None):
         if not Permissions.can_execute(intent):

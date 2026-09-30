@@ -48,6 +48,7 @@ main.py / run.py
      │   ├── MemoryEngine (SQLite)
      │   └── AIEngine -> OllamaClient (provider abstraction + context)
 ├── SkillManager            registry of skills (allowed actions only)
+│   └── skill_schema        declarative per-intent argument contracts
      ├── ConversationEngine     main loop + stop/exit + remote worker thread
      └── RemoteServer           HTTP endpoint for phone/CLI control
 ```
@@ -112,6 +113,12 @@ Desktop/remote surfaces:
 
 - LLM output is NEVER executed. Execution only happens through allowlisted
   skills in `SkillManager` / `Security.permissions`.
+- `ai.routing_mode` decides how much autonomy the model has: `controlled`
+  (default — it may talk but never select a skill) or `smart` (it may
+  propose an allowlisted, schema-validated skill). `agent` is refused by
+  config and by the router until the Phase 12.2 planner exists. Destructive
+  capabilities are never offered to the model and are refused again at
+  dispatch time.
 - Remote server binds `127.0.0.1` by default; enabling LAN access requires an
   explicit token in config. Never bind to `0.0.0.0` without a token.
 - Destructive actions (shutdown, restart) execute only after an explicit
@@ -203,7 +210,7 @@ Still open, in priority order:
 
 - A bug fix ships with a test that **fails without the fix**. Verify both
   directions before claiming it is done.
-- Never reduce the test count. Baseline is 378 passing, 2 skipped.
+- Never reduce the test count. Baseline is 450 passing, 2 skipped.
 - `python Tests/run_tests.py` and `python -m compileall -q .` must both stay
   clean at the end of every change.
 - Mark hardware-dependent results **HARDWARE UNVERIFIED** until run on the real

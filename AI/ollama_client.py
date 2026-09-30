@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 
@@ -139,6 +140,102 @@ class OllamaClient(LLMProvider):
             return CONNECTION_ERROR_MESSAGE
         logger.warning("Ollama request failed after retries: %s", error)
         return GENERIC_ERROR_MESSAGE
+
+    def ask_with_tools(self, prompt, tools, history=None, system=None):
+        """Ask the model, offering tool definitions (ROADMAP 12.7).
+
+        Returns ``(text, tool_call)`` where ``tool_call`` is ``None`` or a
+        ``(name, arguments)`` pair. Failure strings are the same stable
+        messages as :meth:`ask`, so the caller needs one offline filter,
+        not two.
+
+        Note the direction of trust: the model *proposes*, the caller
+        validates. Nothing here executes anything.
+        """
+        if not tools:
+            return self.ask(prompt, history=history, system=system), None
+
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        for role, content in (history or []):
+            messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": prompt})
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            "tools": list(tools),
+            "options": {
+                "temperature": self.temperature,
+                "num_predict": self.max_tokens,
+                "num_ctx": self.num_ctx,
+            },
+        }
+
+        last_error = None
+        for attempt in range(self.retries + 1):
+            try:
+                response = requests.post(
+                    self.chat_url, json=payload, timeout=self.timeout
+                )
+                response.raise_for_status()
+                message = response.json().get("message", {}) or {}
+                text = (message.get("content") or "").strip()
+                return text, self.parse_tool_call(message)
+            except requests.exceptions.Timeout as error:
+                last_error = error
+            except requests.exceptions.ConnectionError as error:
+                last_error = error
+            except requests.exceptions.HTTPError as error:
+                code = error.response.status_code if error.response else 0
+                if code < 500 and code != 429:
+                    logger.warning("Ollama HTTP error %s: %s", code, error)
+                    return GENERIC_ERROR_MESSAGE, None
+                last_error = error
+            except Exception as error:  # noqa: BLE001 - generic, log detail
+                logger.warning("Ollama tool request error: %s", error)
+                return GENERIC_ERROR_MESSAGE, None
+
+            if attempt >= self.retries:
+                break
+            time.sleep(self.retry_delay * (attempt + 1))
+
+        return self._final_failure_message(last_error), None
+
+    @staticmethod
+    def parse_tool_call(message):
+        """Extract the first tool call from an Ollama message.
+
+        Returns ``(name, arguments)`` or ``None``. A malformed call is
+        treated as no call at all: the caller then answers in prose,
+        which is the safe direction. Arguments must be a JSON object;
+        a bare string is parsed, because models emit both.
+        """
+        calls = (message or {}).get("tool_calls") or []
+        if not calls:
+            return None
+
+        function = calls[0].get("function") or {}
+        name = str(function.get("name") or "").strip()
+        if not name:
+            return None
+
+        arguments = function.get("arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments) if arguments.strip() else {}
+            except ValueError:
+                logger.warning("Ollama tool arguments were not valid JSON")
+                return None
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            logger.warning("Ollama tool arguments were not an object")
+            return None
+
+        return name, arguments
 
     def ask_generate(self, prompt):
         payload = {
