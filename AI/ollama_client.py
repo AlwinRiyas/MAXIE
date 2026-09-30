@@ -2,13 +2,31 @@ import json
 import logging
 import time
 
-import requests
-
 from AI.prompts import SYSTEM_PROMPT
 from AI.llm_provider import LLMProvider
 from Config.config import Config
 
 logger = logging.getLogger(__name__)
+
+# ``requests`` costs ~215ms to import (charset detection pulls in chardet and
+# a Unicode table), and it sat on the startup path through
+# BrainRouter -> AIEngine -> this module even though a turn only needs it when
+# the LLM is actually consulted. Every voice command, every /ui page load and
+# every GUI start paid for it. It is loaded on first use instead, which keeps
+# the module-level ``requests.<X>`` references in the except clauses working
+# while taking the cost off cold start. Measured by
+# Tests/perf_test.py::ImportCostTest.
+requests = None
+
+
+def _load_requests():
+    """Import and cache ``requests`` on first use."""
+    global requests
+    if requests is None:
+        import requests as _requests
+
+        requests = _requests
+    return requests
 
 CONNECTION_ERROR_MESSAGE = (
     "I can't reach Ollama right now. "
@@ -65,6 +83,7 @@ class OllamaClient(LLMProvider):
                                    or cfg.get("probe_timeout", 3.0))
 
     def is_available(self):
+        _load_requests()
         try:
             response = requests.get(self.tags_url, timeout=self.probe_timeout)
             return response.status_code == 200
@@ -72,6 +91,7 @@ class OllamaClient(LLMProvider):
             return False
 
     def ask(self, prompt, history=None, system=None):
+        _load_requests()
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -130,6 +150,7 @@ class OllamaClient(LLMProvider):
 
     @staticmethod
     def _final_failure_message(error):
+        _load_requests()
         """Map the last transient failure to the stable user-facing
         string. Never includes the URL or a stack trace (SEC-05)."""
         if isinstance(error, requests.exceptions.Timeout):
@@ -142,6 +163,7 @@ class OllamaClient(LLMProvider):
         return GENERIC_ERROR_MESSAGE
 
     def ask_with_tools(self, prompt, tools, history=None, system=None):
+        _load_requests()
         """Ask the model, offering tool definitions (ROADMAP 12.7).
 
         Returns ``(text, tool_call)`` where ``tool_call`` is ``None`` or a
@@ -238,6 +260,7 @@ class OllamaClient(LLMProvider):
         return name, arguments
 
     def ask_generate(self, prompt):
+        _load_requests()
         payload = {
             "model": self.model,
             "prompt": prompt,

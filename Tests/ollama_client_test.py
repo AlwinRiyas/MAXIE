@@ -12,6 +12,21 @@ from AI.ollama_client import (
 from Config.config import Config
 
 
+def _requests_post(**kwargs):
+    """Patch the HTTP call on the lazily-loaded ``requests``.
+
+    ``AI.ollama_client`` defers importing ``requests`` until a turn
+    actually talks to the LLM, so its module attribute is ``None`` until
+    something calls ``_load_requests()``. Resolve it first, then patch the
+    real module, which is the same object the production code ends up
+    using.
+    """
+    import AI.ollama_client as ollama_client
+
+    ollama_client._load_requests()
+    return mock.patch.object(ollama_client.requests, "post", **kwargs)
+
+
 class _Response:
     def __init__(self, status=200, json_data=None):
         self.status_code = status
@@ -43,8 +58,7 @@ class OllamaClientTest(unittest.TestCase):
         )
 
     def test_ask_returns_message_content(self):
-        with mock.patch(
-            "AI.ollama_client.requests.post",
+        with _requests_post(
             return_value=_Response(json_data={
                 "message": {"role": "assistant", "content": "hello there"}
             }),
@@ -54,8 +68,7 @@ class OllamaClientTest(unittest.TestCase):
         post.assert_called_once()
 
     def test_ask_falls_back_to_generate_response_key(self):
-        with mock.patch(
-            "AI.ollama_client.requests.post",
+        with _requests_post(
             return_value=_Response(json_data={"response": "plain reply"}),
         ) as post:
             answer = self.client.ask("hi")
@@ -63,15 +76,13 @@ class OllamaClientTest(unittest.TestCase):
         post.assert_called_once()
 
     def test_empty_model_reply_is_empty_string(self):
-        with mock.patch(
-            "AI.ollama_client.requests.post",
+        with _requests_post(
             return_value=_Response(json_data={}),
         ):
             self.assertEqual(self.client.ask("hi"), "")
 
     def test_connection_error_retries_then_returns_user_facing_message(self):
-        with mock.patch(
-            "AI.ollama_client.requests.post",
+        with _requests_post(
             side_effect=RequestsConnectionError("refused"),
         ) as post:
             answer = self.client.ask("hi")
@@ -79,8 +90,7 @@ class OllamaClientTest(unittest.TestCase):
         self.assertEqual(post.call_count, 3)  # 1 initial + 2 retries
 
     def test_http_503_then_success_recovers(self):
-        with mock.patch(
-            "AI.ollama_client.requests.post",
+        with _requests_post(
             side_effect=[
                 _Response(status=503),
                 _Response(json_data={"message": {"content": "recovered"}}),
@@ -93,16 +103,14 @@ class OllamaClientTest(unittest.TestCase):
     def test_timeout_retries_then_timeout_message(self):
         from requests.exceptions import Timeout
 
-        with mock.patch(
-            "AI.ollama_client.requests.post", side_effect=Timeout("slow")
+        with _requests_post(side_effect=Timeout("slow")
         ) as post:
             answer = self.client.ask("hi")
         self.assertEqual(answer, TIMEOUT_MESSAGE)
         self.assertEqual(post.call_count, 3)
 
     def test_generic_error_collapses_without_retry(self):
-        with mock.patch(
-            "AI.ollama_client.requests.post",
+        with _requests_post(
             side_effect=ValueError("bad json"),
         ) as post:
             answer = self.client.ask("hi")
@@ -139,19 +147,16 @@ class OllamaClientTest(unittest.TestCase):
 
         cases = [CONNECTION_ERROR_MESSAGE, TIMEOUT_MESSAGE, GENERIC_ERROR_MESSAGE]
 
-        with mock.patch(
-            "AI.ollama_client.requests.post",
+        with _requests_post(
             side_effect=RequestsConnectionError("consumed"),
         ):
             cases.append(client.ask("hi"))
 
-        with mock.patch(
-            "AI.ollama_client.requests.post", side_effect=Timeout("slow")
+        with _requests_post(side_effect=Timeout("slow")
         ):
             cases.append(client.ask("hi"))
 
-        with mock.patch(
-            "AI.ollama_client.requests.post", side_effect=ValueError("x")
+        with _requests_post(side_effect=ValueError("x")
         ):
             cases.append(client.ask("hi"))
 

@@ -98,6 +98,10 @@ Desktop/remote surfaces:
   (PEP-668 OSes fall back to pipx automatically; models cache in
   `Config/tts_models/`, gitignored).
 - Run test suite: `python Tests/run_tests.py`.
+- Benchmarks: `python Installers/benchmark.py [--json] [--hardware]`.
+  Budgets live in `Installers/benchmark.py:BUDGETS_MS`; it exits non-zero on a
+  breach. STT/TTS/wake timings need the laptop — the headless harness will not
+  invent them.
 - Compile check: `python -m compileall -q .`
 - Unit tests use `unittest`; the runner injects project root onto sys.path.
 
@@ -210,7 +214,7 @@ Still open, in priority order:
 
 - A bug fix ships with a test that **fails without the fix**. Verify both
   directions before claiming it is done.
-- Never reduce the test count. Baseline is 450 passing, 2 skipped.
+- Never reduce the test count. Baseline is 463 passing, 2 skipped.
 - `python Tests/run_tests.py` and `python -m compileall -q .` must both stay
   clean at the end of every change.
 - Mark hardware-dependent results **HARDWARE UNVERIFIED** until run on the real

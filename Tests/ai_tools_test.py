@@ -13,6 +13,21 @@ from AI.ollama_client import (
 )
 
 
+def _requests_post(**kwargs):
+    """Patch the HTTP call on the lazily-loaded ``requests``.
+
+    ``AI.ollama_client`` defers importing ``requests`` until a turn
+    actually talks to the LLM, so its module attribute is ``None`` until
+    something calls ``_load_requests()``. Resolve it first, then patch the
+    real module, which is the same object the production code ends up
+    using.
+    """
+    import AI.ollama_client as ollama_client
+
+    ollama_client._load_requests()
+    return mock.patch.object(ollama_client.requests, "post", **kwargs)
+
+
 def _response(payload, status=200):
     response = mock.Mock()
     response.status_code = status
@@ -77,7 +92,7 @@ class AskWithToolsTest(unittest.TestCase):
                                "tool_calls": [{"function": {
                                    "name": "OPEN_APP",
                                    "arguments": {"app": "brave"}}}]}}
-        with mock.patch("AI.ollama_client.requests.post",
+        with _requests_post(
                         return_value=_response(payload)) as post:
             text, call = self.client.ask_with_tools(
                 "open brave", [{"type": "function", "function": {
@@ -90,14 +105,14 @@ class AskWithToolsTest(unittest.TestCase):
 
     def test_plain_answer_with_no_call(self):
         payload = {"message": {"content": "It is half past three."}}
-        with mock.patch("AI.ollama_client.requests.post",
+        with _requests_post(
                         return_value=_response(payload)):
             text, call = self.client.ask_with_tools("what time is it", [])
         self.assertEqual(call, None)
         self.assertIn("half past", text)
 
     def test_empty_tool_list_falls_back_to_plain_ask(self):
-        with mock.patch("AI.ollama_client.requests.post",
+        with _requests_post(
                         return_value=_response(
                             {"message": {"content": "sure"}})) as post:
             text, call = self.client.ask_with_tools("hello", [])
@@ -106,21 +121,21 @@ class AskWithToolsTest(unittest.TestCase):
         self.assertNotIn("tools", post.call_args.kwargs["json"])
 
     def test_timeout_returns_the_stable_message_and_no_call(self):
-        with mock.patch("AI.ollama_client.requests.post",
+        with _requests_post(
                         side_effect=requests.exceptions.Timeout()):
             text, call = self.client.ask_with_tools("hello", [{"x": 1}])
         self.assertEqual(text, TIMEOUT_MESSAGE)
         self.assertIsNone(call)
 
     def test_connection_error_returns_the_stable_message(self):
-        with mock.patch("AI.ollama_client.requests.post",
+        with _requests_post(
                         side_effect=requests.exceptions.ConnectionError()):
             text, call = self.client.ask_with_tools("hello", [{"x": 1}])
         self.assertEqual(text, CONNECTION_ERROR_MESSAGE)
         self.assertIsNone(call)
 
     def test_client_error_never_leaks_the_url(self):
-        with mock.patch("AI.ollama_client.requests.post",
+        with _requests_post(
                         side_effect=requests.exceptions.HTTPError(
                             response=_response({}, status=400))):
             text, call = self.client.ask_with_tools("hello", [{"x": 1}])
@@ -135,7 +150,7 @@ class AskWithToolsTest(unittest.TestCase):
             _response({}, status=503),
             _response({"message": {"content": "ok"}}),
         ]
-        with mock.patch("AI.ollama_client.requests.post",
+        with _requests_post(
                         side_effect=responses) as post:
             text, call = client.ask_with_tools("hello", [{"x": 1}])
         self.assertEqual(post.call_count, 2)

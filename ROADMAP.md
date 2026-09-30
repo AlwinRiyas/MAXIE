@@ -308,13 +308,24 @@ skill. 12.2-12.6 build on what is now in place.
 - Delete unguarded `print` in dead code — **TODO** (TD-13)
 - Fix `Logger.instance()` race; add `flush()`/`shutdown()` — **MISSING** (TD-16, TD-47)
 
-### 18.3 Performance · **MISSING** (no measurement exists)
-- Baseline: cold start, wake-to-listen, STT latency, TTS latency, full turn — **TODO**
-- Cache the Whisper model process-wide — **TODO** (SEC-01)
-- Fix the O(n²) energy sum in the recorder — **TODO** (TD-01 §1.4)
-- Bound the `conversation` table — **TODO** (TD-11)
+### 18.3 Performance · **PARTIAL** (headless baseline exists; hardware numbers need the laptop)
+- Baseline: cold start, router turn, VAD throughput, remote round trip —
+  **DONE 2026-09-30** (`Benchmarks/headless_bench.py`, `Installers/benchmark.py`,
+  `Tests/perf_test.py`; budgets in `Installers/benchmark.py:BUDGETS_MS`)
+- Cold start regression: `requests` (~215ms with chardet) was imported on the
+  startup path via `ollama_client` — **DONE 2026-09-30**, now loaded on first
+  use. Router import 283ms -> 51ms
+- Baseline: wake-to-listen, STT latency, TTS latency — **BLOCKED** (needs a
+  sound card; `Installers/benchmark.py --hardware` collects them and the
+  harness refuses to report them headless)
+- Cache the Whisper model process-wide — **DONE** (`d468e5c`, SEC-01)
+- Fix the O(n²) energy sum in the recorder — **DONE** (already numpy-vectorised;
+  `Tests/perf_test.py::SignalPathTest` now pins linear scaling)
+- Bound the `conversation` table — **DONE** (TD-11, `conversation_cap`,
+  `Tests/memory_test.py`)
 - TTS response cache — **MISSING**
-- Replace the 1 s GUI status poll with the event bus — **MISSING** (TD-14)
+- Replace the 1 s GUI status poll with the event bus — **MISSING** (TD-14; note
+  `Core/event_bus.py` is dead code, so this is a redesign, not a wiring fix)
 
 ### 18.4 Documentation · **PARTIAL → improving**
 - Audit set written 2026-09-28 (`ARCHITECTURE`, `GAP_ANALYSIS`, `TECHNICAL_DEBT`, `SECURITY_AUDIT`, `TEST_STATUS`, `OPEN_SOURCE_COMPARISON`, `ROADMAP`, `DEVELOPMENT_STATUS`) — **DONE**
