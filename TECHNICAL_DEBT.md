@@ -11,6 +11,12 @@ uncommitted state-machine WIP**; TD-31 is partially closed. Test count moved
 from 139 to **208**. The counts below retain the original register numbering —
 closed items are annotated, not renumbered, so line references stay stable.
 
+**Status update (2026-09-30):** TD-16, TD-22, TD-23, TD-25, TD-26 and TD-47 are
+**CLOSED**; TD-17 is **partially closed** (file now owner-only `0600`; the 3×
+plaintext utterance logging remains). Closing commit is the Phase 18 lifecycle
+batch; the suite sits at **326 tests, 2 skipped**. The register numbering is
+still preserved.
+
 Severity note: TD-08 was initially rated CRITICAL as "live token committed".
 That was **overstated** — verification showed the `remote_server.token` value in
 the worktree is empty and the HEAD blob is 0 bytes, so nothing leaks today. It
@@ -191,12 +197,21 @@ caller's thread, so a slow disk serialises the voice loop.
 *Fix:* double-checked lock; move `setLevel` after the guard; consider a
 `QueueHandler`.
 
+**Status: CLOSED (2026-09-30, Phase 18 batch).** `Logger.instance()` now uses a
+module-level `_instance_lock` with double-checked locking; a 10-thread
+first-call barrier test proves exactly one instance (`Tests/logger_test.py`).
+
 ### TD-17 Full user utterances logged three times, files are `0777`
 `Brain/brain_router.py:44`, `Conversation/conversation_engine.py:149`, `:218`
 235 utterances confirmed in `Logs/maxie.log`; the same text is persisted forever
 in SQLite and pushed to the phone. `ls -la Logs/` shows `-rwxrwxrwx`.
 *Fix:* hash/length at INFO, content at DEBUG behind a flag, `chmod 0600`, add a
 retention sweep.
+
+**Status: PARTIALLY CLOSED (2026-09-30).** The log file is now forced to
+`0600` on every `Logger` construction (owner-only; the dev share ignores POSIX
+modes so the check is skipped there). The 3× plaintext utterance logging and
+the retention sweep remain open.
 
 ---
 
@@ -226,12 +241,21 @@ Errors are echoed to the caller, `ollama_client` leaks the internal URL, and
 `Core/core_manager.py:114-128` — one raise orphans every remaining resource.
 Wrap each step with `contextlib.suppress` and per-step logging.
 
+**Status: CLOSED (2026-09-30, Phase 18 batch).** Teardown is a named-step loop
+with per-step `try/except` + logging; one failing subsystem no longer orphans
+the rest (`Tests/shutdown_test.py`).
+
 ### TD-23 Blocking network I/O inside a signal handler
 `Core/core_manager.py:95-98` → `Interface/remote_server.py:122`
 `self._server.shutdown()` blocks on the `serve_forever` thread: deadlock risk and
 not async-signal-safe. `raise SystemExit(0)` is already redundant
 (`run.py:42-44`).
 *Fix:* set a flag or write to a self-pipe and let the main loop exit.
+
+**Status: CLOSED (2026-09-30, Phase 18 batch).** `_handle_signal` now logs and
+`raise SystemExit(0)`; cleanup runs on the main thread via the `start()`/`run.py`
+`finally`. Verified fail-first — the old direct-call handler failed the new
+deferral test (`Tests/shutdown_test.py`).
 
 ### TD-24 `RemoteServer.start()`/`stop()` unsynchronised, thread never joined
 `Interface/remote_server.py:95`, `:127-128`
@@ -243,10 +267,19 @@ double-bind or leak the `serve_forever` thread. `MAXIE-RemoteTTS` /
 `Core/core_manager.py:115-117` — non-atomic check-then-set; two shutdown paths
 can both proceed.
 
+**Status: CLOSED (2026-09-30, Phase 18 batch).** A `_shutdown_lock` guards the
+`shutting_down` flag and a single teardown pass; double `shutdown()` calls are
+idempotent (`Tests/shutdown_test.py`).
+
 ### TD-26 `Config.set_audio` duplicates the write path and skips re-sync
 `Config/config.py:219-228` inlines `json.dump(..., default=str)` (missing
 `ensure_ascii=False`) and, unlike `set()` (`:199`), never calls `load(force=True)`,
 leaving `cls.data` and disk divergent.
+
+**Status: CLOSED (2026-09-30, Phase 18 batch).** `set_audio` now uses the shared
+`_save_file` write path (`ensure_ascii=False`) followed by `cls.load(force=True)`;
+`Tests/config_test.py::ConfigWriteSyncTest` proves disk↔memory stay in sync and
+unicode survives a round-trip.
 
 ### TD-27 No schema validation anywhere
 `Config/config.py:167-179`; `Core/core_manager.py:56`
@@ -323,7 +356,7 @@ bypasses readiness, so a forced-but-missing engine reports itself available —
 | TD-44 | `Ui/gui.py:12-17` | `_load_autostart` uses `exec_module` on every construction, bypassing the import cache. |
 | TD-45 | `Conversation/conversation_engine.py:131-143` vs `:249-261` | Exit logic duplicated and already drifted. |
 | TD-46 | `remote_server.py:21`; `conversation_engine.py:287,293,303`; `gui.py:135,185,241` | Magic numbers not in `Config` while every other tunable is. |
-| TD-47 | `Logs/logger.py` | No `shutdown()`/`flush()`; `RotatingFileHandler` never closed. |
+| TD-47 | `Logs/logger.py` | No `shutdown()`/`flush()`; `RotatingFileHandler` never closed. **CLOSED (2026-09-30):** `Logger.shutdown()` flushes, closes handlers and clears the singleton; `instance()` self-heals (`Tests/logger_test.py`). |
 
 ---
 

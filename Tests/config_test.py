@@ -119,5 +119,43 @@ class ConfigReadNoWriteTest(unittest.TestCase):
         )
 
 
+class ConfigWriteSyncTest(unittest.TestCase):
+    """TD-26: set_audio must use the shared write path and re-sync the
+    loaded in-memory config with disk."""
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self._orig_files = dict(Config.FILES)
+        self._orig_data = json.loads(json.dumps(Config.data))
+        self.addCleanup(self._restore)
+        audio_path = os.path.join(self._dir.name, "audio.json")
+        with open(audio_path, "w", encoding="utf-8") as f:
+            json.dump(Config.DEFAULT_AUDIO, f)
+        Config.FILES = {**self._orig_files, "audio": audio_path}
+        Config.load(force=True)
+        self.audio_path = audio_path
+
+    def _restore(self):
+        Config.FILES = dict(self._orig_files)
+        Config.data = self._orig_data
+
+    def test_set_audio_syncs_disk_and_memory(self):
+        Config.set_audio(sample_rate=48000)
+        with open(self.audio_path, "r", encoding="utf-8") as f:
+            on_disk = json.load(f)
+        self.assertEqual(on_disk["sample_rate"], 48000)
+        self.assertEqual(
+            Config.audio()["sample_rate"], 48000,
+            "loaded data must not diverge from disk after a write",
+        )
+
+    def test_set_audio_preserves_unicode(self):
+        Config.set_audio(device_name="Mikrofon — Super Tøff")
+        with open(self.audio_path, "r", encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("Mikrofon — Super Tøff", text)
+
+
 if __name__ == "__main__":
     unittest.main()

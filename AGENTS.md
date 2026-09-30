@@ -158,26 +158,35 @@ commit and test evidence:**
 - **TD-01 / TD-02** TTS cancellation + `_speaking` latch (commit `030c9e2`).
 - **TD-03** recorder wall-clock deadline (commit `7dc99b4`).
 - **TD-04 / TD-15 / TD-32** state machine, atomic capture↔playback
-  reservations, and the GUI auto-listen lock (uncommitted WIP — review and
-  commit before trusting `git status`).
+  reservations, and the GUI auto-listen lock (committed in the `bfb49cb` /
+  `a4d7bf9` hardening batch; `git status` no longer shows them as WIP).
+- **TD-16 / TD-22 / TD-23 / TD-25 / TD-26 / TD-47** lifecycle batch (Phase 18,
+  2026-09-30): race-free `Logger.instance()` + `shutdown()`/flush; error-isolated,
+  lock-guarded, idempotent `Maxie.shutdown()`; signal handler defers cleanup to
+  the main thread; `set_audio` re-syncs disk↔memory. **TD-17 partial**: log file
+  now owner-only `0600`; the 3× utterance logging remains.
 
 Still open, in priority order:
 - **B1** `AI/ai_engine.py:82-84` — only 1 of 4 Ollama failure strings is
   filtered; the other 3 are persisted as conversation context and re-injected
   forever.
-- **TD-05** `Voice/vad_engine.py:109` — the energy-VAD fallback requires speech
-  to be 3x the ambient RMS, which real rooms never satisfy.
-- **TD-07** remote server unbounded bodies/threads (SEC-03/04/05/11).
-- **TD-06** STT/VAD one-shot load latch disables the subsystem permanently.
-- **TD-08** / SEC-02 — `Config/*.json` is now gitignored and untracked; the
-  token field is empty today. The next real token must go only into the
-  ignored file, never an example.
+- **TD-07 / SEC-05 (remote half)** — remote server unbounded bodies/threads
+  (SEC-03/04/05/11): body caps, rate limits, `compare_digest`, and generic
+  error bodies are already in place (`bfb49cb`); remaining is the remote
+  half of SEC-05 (LLM URL/provider disclosure over `/command`) plus a
+  thread/body ceiling review.
+- **TD-08** / SEC-02 — `Config/*.json` is gitignored and untracked; the token
+  field is empty today. The next real token must go only into the ignored
+  file, never an example.
+- **TD-17 remainder** — 3× plaintext utterance logging + retention sweep.
+- **TD-27** — no config schema validation; a bad `port` surfaces as a raw
+  traceback in `run.py`.
 
 ## Working rules for changes
 
 - A bug fix ships with a test that **fails without the fix**. Verify both
   directions before claiming it is done.
-- Never reduce the test count. Baseline is 208 passing, 1 skipped.
+- Never reduce the test count. Baseline is 326 passing, 2 skipped.
 - `python Tests/run_tests.py` and `python -m compileall -q .` must both stay
   clean at the end of every change.
 - Mark hardware-dependent results **HARDWARE UNVERIFIED** until run on the real

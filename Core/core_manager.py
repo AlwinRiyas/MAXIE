@@ -1,4 +1,5 @@
 import signal
+import threading
 
 from Logs.logger import Logger
 from Config.config import Config
@@ -16,6 +17,7 @@ class Maxie:
     def __init__(self, voice_engine=None, router=None):
         self.logger = Logger.instance()
         self.shutting_down = False
+        self._shutdown_lock = threading.Lock()
 
         self.config = Config.load()
 
@@ -100,7 +102,14 @@ class Maxie:
 
     def _handle_signal(self, signum, frame):
         print("\n\nInterrupt received. Shutting down MAXIE...")
-        self.shutdown()
+        # TD-23: a signal handler must not run blocking network I/O
+        # (remote.stop() waits on the serve_forever thread; the recorder
+        # may be mid-stream). Defer cleanup to the main thread instead:
+        # start()'s finally and run.py's finally both call shutdown()
+        # synchronously once SystemExit propagates. If we blocked here we
+        # could deadlock the very shutdown we are trying to perform.
+        self.logger.warning(
+            f"Signal {signum} received; cleanup runs on the main thread.")
         raise SystemExit(0)
 
     def start(self):
@@ -118,18 +127,27 @@ class Maxie:
             self.shutdown()
 
     def shutdown(self):
-        if self.shutting_down:
-            return
-        self.shutting_down = True
+        # TD-25: check-then-set must be atomic or two shutdown paths
+        # (signal + main loop finally) can both run the teardown steps.
+        with self._shutdown_lock:
+            if self.shutting_down:
+                return
+            self.shutting_down = True
 
         self.logger.info("MAXIE shutting down.")
 
-        if self.remote is not None:
-            self.remote.stop()
-
-        self.conversation.stop()
-
-        self.voice_engine.shutdown()
+        # TD-22: one failing teardown step must never orphan the others,
+        # and the error must reach the log, not escape as an exception.
+        teardown = [("remote", lambda: self.remote.stop()),
+                    ("conversation", self.conversation.stop),
+                    ("voice", self.voice_engine.shutdown)]
+        for name, step in teardown:
+            if name == "remote" and self.remote is None:
+                continue
+            try:
+                step()
+            except Exception as error:
+                self.logger.error(f"{name} shutdown error: {error}")
 
         self.logger.info("MAXIE shutdown complete.")
 

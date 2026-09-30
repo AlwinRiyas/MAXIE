@@ -267,15 +267,15 @@ awaiting review/commit.
 ## Phase 18 — Quality attributes · **MOSTLY MISSING**
 
 ### 18.1 Testing · **PARTIAL**
-- Adversarial/negative tests — **MISSING**
-- **"One bad command must not end the session"** — **MISSING** (the core property)
-- Concurrency tests (memory, capture, playback) — **MISSING**
-- Resource-lifecycle tests (no leaked threads/streams) — **MISSING**
+- Adversarial/negative tests — **PARTIAL** (barge-in, SEC-06 injection, SEC-08 bulk-delete, availability probe, budget — all headless-negative)
+- **"One bad command must not end the session"** — **DONE 2026-09-29** (TD-22: teardown steps are error-isolated; one failing step no longer orphans the others — `Tests/shutdown_test.py`)
+- Concurrency tests (memory, capture, playback) — **MINIMAL** (`Tests/logger_test.py` TD-16 race)
+- Resource-lifecycle tests (no leaked threads/streams) — **PARTIAL** (`Tests/shutdown_test.py`; remote thread join is TD-24)
 - Remove vacuous tests (`learning_test.py:68`) — **TODO**
 - **Stop the suite mutating real config** — **DONE** (2026-09-28). `Tests/tts_test.py`
   now redirects `Config.FILES` to a temp dir; a new guard test asserts the live
   `Config/audio_config.json` is byte-identical after a run. Proven to fail
-  without the isolation. Baseline is now **208 tests, 1 skipped** (~13 s).
+  without the isolation. Baseline is now **326 tests, 2 skipped**.
 - Removing the dead `Core/state_manager.py` and pointing tests at the live
   machine — **DONE 2026-09-29** (`Tests/state_test.py` now covers
   `VoiceStateMachine`; the dead module is deleted).
@@ -285,9 +285,10 @@ awaiting review/commit.
   cleanly.
 - Hardware smoke test suite for the laptop — **BLOCKED**
 
-### 18.2 Observability · **MISSING**
-- Structured logging; remove the 3× plaintext utterance logging — **MISSING** (TD-17)
+### 18.2 Observability · **PARTIAL**
+- Structured logging; remove the 3× plaintext utterance logging — **PARTIAL** (TD-17: log file now owned by the user — owner-only `0600`; the 3× plaintext utterances remain, gated by INFO)
 - Secret/PII redaction — **MISSING**
+- **Lifecycle hygiene** — **DONE 2026-09-29**: `Logger.instance()` is race-free (TD-16), has `shutdown()`/flush (TD-47); `Maxie.shutdown()` is thread-safe with an atomic flag (TD-25), error-isolated per step (TD-22), and the signal handler defers blocking cleanup to the main thread (TD-23); `Config.set_audio` re-syncs memory↔disk (TD-26)
 - `Logs/` and `Memory/` permissions `0600` — **MISSING** (TD-17)
 - Metrics: latency, TTS/STT timing, route distribution — **MISSING**
 - Delete unguarded `print` in dead code — **TODO** (TD-13)

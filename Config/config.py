@@ -260,14 +260,18 @@ class Config:
 
     @classmethod
     def set_audio(cls, **kwargs):
-        """Persist audio settings (used by installers/customization)."""
+        """Persist audio settings (used by installers/customization).
+
+        TD-26: uses the same ``_save_file`` write path as ``set`` and, like
+        ``set``, reloads from disk afterwards so ``cls.data`` and the file
+        never diverge.
+        """
         cls.load()
-        updated = cls.data["audio"]
+        updated = dict(cls.data["audio"])
         updated.update(kwargs)
-        resolved = cls.FILES["audio"]
         cls.data["audio"] = updated
-        with open(resolved, "w", encoding="utf-8") as f:
-            json.dump(updated, f, indent=2, default=str)
+        cls._save_file(cls.FILES["audio"], updated)
+        cls.load(force=True)
         return updated
 
     @classmethod
