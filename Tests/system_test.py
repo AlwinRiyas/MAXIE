@@ -216,11 +216,25 @@ class BulkDeleteConfirmationTest(unittest.TestCase):
         self.assertIn("confirm", response)
         self.assertFalse(self.router.command.deleted["seen"], "must not delete yet")
 
-    def test_bulk_delete_executes_after_confirm(self):
-        response = self.router.process("yes delete all memories")
+    def test_bulk_delete_executes_after_separate_confirm(self):
+        """SEC-11: the confirmation must be its own turn."""
+        prompt = self.router.process("delete all memories")
+        self.assertIn("won't", prompt)
+        response = self.router.process("yes")
         self.assertEqual(response, "deleted-all")
         self.assertTrue(self.router.command.deleted["seen"])
         self.assertEqual(self.router.command.deleted["value"], "all")
+
+    def test_bulk_delete_refuses_ask_and_confirm_in_one_turn(self):
+        """SEC-11: one message cannot both wipe and confirm."""
+        response = self.router.process("yes delete all memories")
+        self.assertIn("won't", response)
+        self.assertFalse(
+            self.router.command.deleted["seen"],
+            "a single combined request must never wipe memories",
+        )
+        # The action is still pending, so a real confirmation works.
+        self.assertEqual(self.router.process("yes"), "deleted-all")
 
     def test_single_memory_delete_unguarded(self):
         response = self.router.process("delete my memory about shuttle")
@@ -232,6 +246,104 @@ class BulkDeleteConfirmationTest(unittest.TestCase):
         response = self.router.process("no do not delete all memories")
         self.assertIn("won't", response)
         self.assertFalse(self.router.command.deleted["seen"])
+
+
+class _RecordingSkills(_StubSkills):
+    """Records every executed (intent, value) pair."""
+
+    def __init__(self):
+        self.calls = []
+
+    def execute(self, intent, value="", extra=None):
+        self.calls.append((intent, value))
+        return super().execute(intent, value, extra)
+
+
+class DestructiveTwoStepTest(unittest.TestCase):
+    """SEC-11: a destructive action must be asked for in one turn and
+    confirmed in another, so a single request can never do both."""
+
+    def setUp(self):
+        self.router = BrainRouter()
+        self.router.command = _RecordingSkills()
+        self.router.memory, self._db = _isolated_memory()
+
+    def _executed(self, intent):
+        return [call for call in self.router.command.calls if call[0] == intent]
+
+    def test_shutdown_is_held_then_executes_on_bare_yes(self):
+        prompt = self.router.process("shut down the computer")
+        self.assertIn("confirm", prompt.lower())
+        self.assertEqual(self._executed("SHUTDOWN"), [],
+                         "the action must not run on the asking turn")
+
+        response = self.router.process("yes")
+        self.assertEqual(len(self._executed("SHUTDOWN")), 1)
+
+    def test_ask_and_confirm_in_one_turn_is_refused(self):
+        response = self.router.process("yes shut down the computer")
+        self.assertIn("confirm", response.lower())
+        self.assertEqual(self._executed("SHUTDOWN"), [],
+                         "one message must never both ask and confirm")
+
+    def test_confirmation_after_the_prompt_still_works(self):
+        self.router.process("shut down the computer")
+        self.router.process("yes shut down the computer")
+        self.router.process("yes")
+        self.assertEqual(len(self._executed("SHUTDOWN")), 1,
+                         "the request stays pending, then confirms")
+
+    def test_confirmation_expires(self):
+        self.router._confirm_ttl = -1.0
+        self.router.process("shut down the computer")
+        response = self.router.process("yes")
+        self.assertEqual(self._executed("SHUTDOWN"), [],
+                         "a stale prompt must not execute")
+        self.assertNotIn("shut", response.lower())
+
+    def test_bare_confirmation_without_a_prompt_does_nothing(self):
+        response = self.router.process("yes")
+        self.assertEqual(self._executed("SHUTDOWN"), [])
+        self.assertEqual(self._executed("DELETE_MEMORY_BULK"), [])
+
+    def test_surrounding_words_are_not_a_confirmation(self):
+        self.router.process("restart the computer")
+        for reply in ("yes please shut down the computer",
+                      "yes but what time is it",
+                      "affirmative, delete everything"):
+            self.router.process(reply)
+        self.assertEqual(self._executed("RESTART"), [])
+        self.assertEqual(self._executed("SHUTDOWN"), [])
+
+    def test_prompt_is_bound_to_the_caller_that_raised_it(self):
+        self.router.bind_source("192.168.1.5")
+        self.router.process("shut down the computer")
+
+        # A different device cannot confirm the first device's prompt.
+        self.router.bind_source("192.168.1.9")
+        self.router.process("yes")
+        self.assertEqual(self._executed("SHUTDOWN"), [],
+                         "another source must not confirm this prompt")
+
+        self.router.bind_source("192.168.1.5")
+        self.router.process("yes")
+        self.assertEqual(len(self._executed("SHUTDOWN")), 1)
+
+    def test_unrelated_request_does_not_confirm(self):
+        self.router.process("shut down the computer")
+        response = self.router.process("what time is it")
+        self.assertEqual(len(self._executed("TIME")), 1)
+        self.assertEqual(self._executed("SHUTDOWN"), [])
+        self.router.process("yes")
+        self.assertEqual(len(self._executed("SHUTDOWN")), 1,
+                         "the pending prompt survives an unrelated question")
+
+    def test_restart_needs_its_own_confirmation(self):
+        self.router.process("shut down the computer")
+        self.router.process("yes")
+        self.assertEqual(len(self._executed("SHUTDOWN")), 1)
+        self.assertEqual(self._executed("RESTART"), [],
+                         "one confirmation cannot cover two actions")
 
 
 class LogRedactionTest(unittest.TestCase):

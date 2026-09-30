@@ -19,8 +19,10 @@ Standard library only (``http.server``) — no Flask/requests needed.
 """
 
 import hmac
+import inspect
 import json
 import os
+import secrets
 import tempfile
 import threading
 import time
@@ -51,6 +53,21 @@ class _TokenBucket:
             self._tokens -= 1.0
             return True
         return False
+
+
+def _accepts_source(callback):
+    """True when ``callback`` can take the caller identity as a second
+    argument, so the router can bind confirmations to one device."""
+    if callback is None:
+        return False
+    try:
+        parameters = inspect.signature(callback).parameters
+    except (TypeError, ValueError):
+        return False
+    if any(p.kind is inspect.Parameter.VAR_POSITIONAL
+           for p in parameters.values()):
+        return True
+    return len(parameters) >= 2
 
 
 class _BoundedThreadingHTTPServer(ThreadingHTTPServer):
@@ -144,6 +161,10 @@ class RemoteServer:
         self.logger = Logger.instance()
 
         self._config = config or {}
+        # SEC-11: the confirmation state is bound to the client address, so
+        # one device cannot confirm a prompt another device raised. Older
+        # single-argument callbacks keep working.
+        self._on_command_takes_source = _accepts_source(on_command)
         self.max_voice_bytes = int(
             self._config.get("max_voice_bytes", 10 * 1024 * 1024)
         )
@@ -202,18 +223,24 @@ class RemoteServer:
                 self._buckets[client_address] = bucket
             return bucket
 
-    def _audit(self, client_address, method, path, outcome):
+    def _audit(self, client_address, method, path, outcome, request_id=None,
+               detail=None):
         if not self.audit_log:
             return
         try:
-            entry = json.dumps({
+            entry = {
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 "client": client_address,
                 "method": method,
                 "path": path,
                 "outcome": outcome,
-            })
-            self.logger.info("REMOTE_AUDIT " + entry)
+            }
+            if request_id:
+                entry["request_id"] = request_id
+            if detail:
+                # Never the raw words: TD-17 keeps utterances out of the log.
+                entry["command"] = self.logger.utterance(detail)
+            self.logger.info("REMOTE_AUDIT " + json.dumps(entry))
         except Exception:  # noqa: BLE001 - audit must never break the request
             pass
 
@@ -221,7 +248,7 @@ class RemoteServer:
     # Command dispatch -> conversation loop
     # ----------------------------------------------------------
 
-    def _dispatch(self, text):
+    def _dispatch(self, text, source=None):
         """Returns a (status_code, payload) pair, never raises."""
         if not self.on_command:
             return 503, {
@@ -229,9 +256,12 @@ class RemoteServer:
             }
 
         try:
-            future = self.on_command(text)
+            if self._on_command_takes_source:
+                future = self.on_command(text, source)
+            else:
+                future = self.on_command(text)
         except Exception:  # defensive: never crash the server
-            self.logger.error("Remote command enqueue failed")
+            self.logger.error(f"Remote command enqueue failed [{source}]")
             return 500, {"ok": False, "error": "Command could not be started."}
 
         if future is None:
@@ -243,7 +273,8 @@ class RemoteServer:
                 return 200, {"ok": True, "response": future.result(
                     timeout=self.timeout) or ""}
             except Exception as error:
-                self.logger.error(f"Remote command failed/timed out: {error}")
+                self.logger.error(
+                    f"Remote command failed/timed out [{source}]: {error}")
                 return 200, {
                     "ok": True,
                     "response": "MAXIE took too long to respond. Please try again.",
@@ -313,11 +344,26 @@ class RemoteServer:
             protocol_version = "HTTP/1.1"
 
             # ---- helpers -------------------------------------------------
+            # SEC-11: every request gets a short correlation id, echoed in
+            # the response and in the audit/error log lines, so a user can
+            # say "the command with id a1b2c3d4 failed" and an operator can
+            # find exactly that request.
+            _request_id = None
+
+            def _new_request_id(self):
+                self._request_id = secrets.token_hex(4)
+                return self._request_id
+
+            def _send_request_id(self):
+                if self._request_id:
+                    self.send_header("X-MAXIE-Request-Id", self._request_id)
+
             def _send_json(self, code, payload):
                 body = json.dumps(payload).encode("utf-8")
                 self.send_response(code)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
+                self._send_request_id()
                 self._send_cors()
                 self.end_headers()
                 self.wfile.write(body)
@@ -327,6 +373,7 @@ class RemoteServer:
                 self.send_response(code)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(body)))
+                self._send_request_id()
                 self._send_cors()
                 self.end_headers()
                 self.wfile.write(body)
@@ -351,7 +398,8 @@ class RemoteServer:
             def _check_auth(self):
                 if outer._authorized(self.headers):
                     return True
-                outer._audit(self.client_address[0], self.command, self.path, 401)
+                outer._audit(self.client_address[0], self.command, self.path, 401,
+                             self._request_id)
                 self._send_json(401, {"ok": False, "error": "Invalid or missing token."})
                 return False
 
@@ -362,7 +410,8 @@ class RemoteServer:
                 except ValueError:
                     actual = 0
                 if actual < 0 or actual > cap:
-                    outer._audit(self.client_address[0], self.command, self.path, 413)
+                    outer._audit(self.client_address[0], self.command, self.path,
+                                 413, self._request_id)
                     self._send_json(413, {
                         "ok": False,
                         "error": f"Request body exceeds the {cap}-byte limit.",
@@ -389,11 +438,14 @@ class RemoteServer:
 
             # ---- HTTP verbs ---------------------------------------------
             def do_OPTIONS(self):
+                self._new_request_id()
                 self.send_response(204)
+                self.send_header("X-MAXIE-Request-Id", self._request_id)
                 self._send_cors()
                 self.end_headers()
 
             def do_GET(self):
+                self._new_request_id()
                 if self.path == "/ui":
                     self._send_text(200, outer._load_ui_html(), "text/html; charset=utf-8")
                     return
@@ -423,12 +475,14 @@ class RemoteServer:
                 self._send_json(404, {"ok": False, "error": "Not found."})
 
             def do_POST(self):
+                self._new_request_id()
                 if not self._check_auth():
                     return
 
                 bucket = outer._bucket_for(self.client_address[0])
                 if not bucket.try_take():
-                    outer._audit(self.client_address[0], self.command, self.path, 429)
+                    outer._audit(self.client_address[0], self.command, self.path,
+                                 429, self._request_id)
                     self._send_json(429, {
                         "ok": False,
                         "error": "Too many requests. Please wait and try again.",
@@ -464,12 +518,18 @@ class RemoteServer:
 
                 text = text.strip()
                 if not text:
-                    outer._audit(self.client_address[0], self.command, self.path, 400)
+                    outer._audit(self.client_address[0], self.command, self.path,
+                                 400, self._request_id)
                     self._send_json(400, {"ok": False, "error": "Empty command."})
                     return
 
-                code, payload = outer._dispatch(text)
+                source = f"{self.client_address[0]}#{self._request_id}"
+                code, payload = outer._dispatch(text, source)
                 payload.setdefault("ok", code < 400)
+                # SEC-11: accepted commands are audited too, not only the
+                # rejected ones. The command text is redacted (TD-17).
+                outer._audit(self.client_address[0], self.command, self.path,
+                             code, self._request_id, detail=text)
                 self._send_json(code, payload)
 
             # ---- /voice (phone sends a WAV) -----------------------------
@@ -486,7 +546,8 @@ class RemoteServer:
 
                 audio = self._read_capped(outer.max_voice_bytes)
                 if not audio.startswith(b"RIFF"):
-                    outer._audit(self.client_address[0], self.command, self.path, 400)
+                    outer._audit(self.client_address[0], self.command, self.path,
+                                 400, self._request_id)
                     self._send_json(400, {
                         "ok": False,
                         "error": "Expected a WAV (RIFF) payload.",
@@ -502,7 +563,8 @@ class RemoteServer:
                     handle.close()
                     result = outer.on_voice(handle.name)
                 except Exception:
-                    outer.logger.error("Voice dispatch failed")
+                    outer.logger.error(
+                        f"Voice dispatch failed [{self._request_id}]")
                     result = {"error": "Voice processing failed."}
                 finally:
                     try:
@@ -511,9 +573,12 @@ class RemoteServer:
                         pass
 
                 if isinstance(result, dict) and result.get("error"):
-                    outer._audit(self.client_address[0], self.command, self.path, 500)
+                    outer._audit(self.client_address[0], self.command, self.path,
+                                 500, self._request_id)
                     self._send_json(500, {"ok": False, **result})
                 elif isinstance(result, dict):
+                    outer._audit(self.client_address[0], self.command,
+                                 self.path, 200, self._request_id)
                     payload = {"ok": True, **result}
                     self._send_json(200, payload)
                 else:

@@ -57,12 +57,20 @@ class IntentEngine:
             "shutdown the pc", "shut down the pc", "shutdown pc",
             "shutdown computer", "turn off the pc", "turn off pc",
             "shut down the laptop", "shutdown laptop", "turn off laptop",
+            # Phrasing a person actually says. Without these, "shut down the
+            # computer" fell through to the LLM instead of the power skill.
+            "shut down the computer", "shutting down the computer",
+            "shut down computer", "shut it down", "shut the computer down",
+            "power off", "power the pc off", "power off the computer",
+            "turn off the computer", "turn the computer off",
         )):
             return "SHUTDOWN"
 
         if any(phrase in text for phrase in (
             "restart the pc", "restart pc", "restart computer", "reboot",
             "restart the laptop", "restart laptop",
+            "restart the computer", "restart my computer", "reboot the pc",
+            "reboot computer", "reboot the computer",
         )):
             return "RESTART"
 

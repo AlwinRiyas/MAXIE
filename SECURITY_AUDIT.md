@@ -215,11 +215,26 @@ shutdown.
 a source address; consider a second factor (a rotating nonce) for destructive
 commands.
 
-**Status: MOSTLY CLOSED (2026-09-30).** Per-client token-bucket rate limiting
-(429 past the bucket) and the optional append-only audit log are in
-(`remote_server.max_connections` also caps live request threads — TD-07).
-Still open: a request id for correlation, and any second factor for
-destructive commands.
+**Status: CLOSED (2026-09-30).** All four parts are in place:
+1. Per-client token-bucket rate limiting (429 past the bucket), plus
+   `remote_server.max_connections` capping live request threads (TD-07).
+2. Append-only audit log that records **accepted** commands as well as
+   rejected ones, with client address, outcome, request id, and the
+   command text redacted to a length + digest (TD-17).
+3. Request-id correlation: every response carries `X-MAXIE-Request-Id`
+   (8 hex chars), echoed in the audit entry and in the error-log lines, so
+   a user can quote the id of a failed command.
+4. Second factor for destructive commands: a destructive action can no
+   longer be asked for and confirmed in the same utterance. "yes shut down"
+   is refused and re-prompted; only a bare confirmation ("yes") in a later
+   turn executes the held action, which expires after
+   `confirm_ttl_seconds` (default 60) and is bound to the client that
+   raised it, so one device cannot confirm another device's prompt.
+
+A rotating nonce was considered and rejected: a nonce stops replay, not a
+live attacker who holds the token, so it would add ceremony without
+changing the threat. The two-step confirmation is the control that
+actually limits the blast radius of a leaked token.
 
 ### SEC-12 — MEDIUM — Blocking network I/O in a signal handler
 `Core/core_manager.py:95-98` → `Interface/remote_server.py:122`

@@ -256,13 +256,16 @@ awaiting review/commit.
 - **17.9** **`hmac.compare_digest` token compare** — **MISSING** (SEC-04)
 - **17.10** **No internal detail in error bodies; correct status codes** — **MISSING** (SEC-05)
 - **17.11** **Command audit log** — **MISSING** (SEC-11)
-- **17.12** Gate `/ui` behind auth — **MISSING** (SEC-10)
+- **17.12** Gate `/ui` behind auth — **DONE by deviation** (SEC-10) — the tap-to-talk page stays public, every command stays token-checked, so a locked screen cannot be bricked
 - **17.13** Per-command action + rollback — **MISSING**
 - **17.14** Conversation history view — **MISSING**
 - **17.15** Enable/disable skills from the phone — **MISSING**
 - **17.16** Richer diagnostics endpoint — **PARTIAL**
-- **17.17** Thread-safe start/stop; join the server thread — **MISSING** (TD-24)
-- **17.18** Stop must resolve queued futures — **MISSING** (TD-10)
+- **17.17** Thread-safe start/stop; join the server thread — **DONE** (TD-24) — lock-guarded, `shutdown()` + `server_close()` + bounded join
+- **17.18** Stop must resolve queued futures — **DONE** (TD-10) — queued futures resolve with a shutdown error instead of hanging the caller
+- **17.19** Request-id correlation (`X-MAXIE-Request-Id`) — **DONE** (SEC-11)
+- **17.20** Two-step confirmation for destructive commands — **DONE** (SEC-11) — separate confirm turn, client-bound, `confirm_ttl_seconds` expiry
+- **17.21** Bounded live request threads — **DONE** (TD-07) — `max_connections`, 503 beyond the ceiling
 
 ## Phase 18 — Quality attributes · **MOSTLY MISSING**
 

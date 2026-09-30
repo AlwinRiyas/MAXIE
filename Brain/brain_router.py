@@ -1,3 +1,6 @@
+import re
+import time
+
 from AI.ai_engine import AIEngine
 from Brain.command_corrector import CommandCorrector
 from Brain.command_engine import CommandEngine
@@ -48,6 +51,23 @@ class BrainRouter:
             Config.ai_config().get("auto_learn_session_cap", 30))
         self._auto_learn_counts = 0
 
+        # SEC-11: a destructive action may only be confirmed in a *separate*
+        # turn, so one request ("yes shut down") cannot both ask and confirm.
+        # State: {"intent", "value", "source", "expires"}.
+        self._pending = None
+        self._confirm_ttl = float(
+            Config.remote_config().get("confirm_ttl_seconds", 60))
+        self._confirm_source = None
+
+    def bind_source(self, source):
+        """Identify the caller for confirmation binding (SEC-11).
+
+        The remote server sets this to the client address so one device
+        cannot confirm a prompt another device raised. Voice input passes
+        ``None``: one human, one assistant, no cross-caller concern.
+        """
+        self._confirm_source = source or None
+
     # ==================================================
     # PUBLIC: process text -> response string
     # ==================================================
@@ -90,11 +110,17 @@ class BrainRouter:
         if Permissions.requires_confirmation(intent) and intent != "DELETE_MEMORY":
             confirm_words = ("confirm", "yes", "yeah", "do it", "go ahead",
                              "sure", "ok")
-            if any(word in corrected for word in confirm_words
-                   ) and "not" not in corrected:
-                return self.command.execute(intent, value, corrected)
-            return (Permissions.confirmation_for(intent)
-                    or f"I won't {intent.lower()} without your confirmation.")
+            spoken_confirmation = (
+                any(word in corrected for word in confirm_words)
+                and "not" not in corrected
+            )
+            return self._gate_destructive(
+                intent, value, corrected, spoken_confirmation)
+
+        # A bare confirmation only means something right after a prompt,
+        # and only for the caller that raised it (SEC-11).
+        if self._pending_is_ours() and self._is_bare_confirmation(corrected):
+            return self._consume_pending(f"source={self._confirm_source}")
 
         # ---------------- Skills ----------------
         direct = {"TIME", "DATE", "WEATHER", "SYSTEM_INFO", "SCREENSHOT"}
@@ -127,16 +153,11 @@ class BrainRouter:
             if any(word in corrected for word in Permissions.BULK_DELETE_WORDS):
                 # SEC-08: wiping everything needs explicit confirmation
                 # and an audit log line; ordinary delete stays unguarded.
-                confirm_words = ("confirm", "yes", "yeah", "do it", "go ahead",
-                                 "sure", "ok")
-                if any(word in corrected for word in confirm_words
-                       ) and "not" not in corrected:
-                    self.logger.warning(
-                        f"SEC-08: bulk memory wipe confirmed and executed: "
-                        f"{corrected}")
-                    return self.command.execute("DELETE_MEMORY", "all")
-                return (Permissions.confirmation_for("DELETE_MEMORY_BULK")
-                        or "I won't wipe all memories without confirmation.")
+                # SEC-11: that confirmation must be a separate turn.
+                return self._gate_bulk_wipe(
+                    spoken_confirmation=any(
+                        word in corrected for word in self._CONFIRM_WORDS)
+                    and "not" not in corrected)
             return self.command.execute("DELETE_MEMORY", value)
 
         # ---------------- Greeting ----------------
@@ -236,6 +257,104 @@ class BrainRouter:
         ("close ", "I'm not sure what that is. Could you name the app?"),
         ("stop ", "Would you like me to stop talking, or stop an app?"),
     )
+
+    # ==================================================
+    # DESTRUCTIVE CONFIRMATION (SEC-11)
+    #
+    # A destructive action can never be asked for and confirmed in the
+    # same utterance: "yes shut down" is refused and re-prompted, and
+    # only a bare confirmation ("yes") in a *later* turn executes the
+    # action that was held. The pending state expires
+    # ``confirm_ttl_seconds`` after the prompt and is bound to the caller
+    # that raised it, so a second device cannot confirm for the first.
+    # ==================================================
+
+    _CONFIRM_WORDS = ("confirm", "yes", "yeah", "do it", "go ahead",
+                      "sure", "ok")
+
+    _BARE_CONFIRMATIONS = {
+        "y", "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "ok thanks",
+        "confirm", "confirmed", "do it", "go ahead", "go on", "proceed",
+        "affirmative", "yes please", "yes do it", "do it please",
+    }
+
+    @staticmethod
+    def _is_bare_confirmation(text):
+        """True only for an utterance that is nothing but a confirmation.
+
+        Strict on purpose: "yes shut down" or "yes but what time is it"
+        must not count as a confirmation.
+        """
+        cleaned = re.sub(r"[^a-z ]+", " ", (text or "").lower())
+        cleaned = " ".join(cleaned.split())
+        if not cleaned or "not" in cleaned.split():
+            return False
+        return cleaned in BrainRouter._BARE_CONFIRMATIONS
+
+    def _expire_pending(self):
+        if self._pending is not None and time.monotonic() > self._pending["expires"]:
+            self._pending = None
+
+    def _pending_is_ours(self):
+        """The pending prompt belongs to this caller and has not expired."""
+        self._expire_pending()
+        if self._pending is None:
+            return False
+        return self._pending.get("source") in (None, self._confirm_source)
+
+    def _consume_pending(self, audit_label):
+        pending, self._pending = self._pending, None
+        self.logger.info(
+            f"SEC-11: {pending['intent']} confirmed in a separate turn "
+            f"by {audit_label}")
+        return self.command.execute(
+            pending["exec_intent"], pending["exec_value"], pending["text"])
+
+    def _hold_for_confirmation(self, intent, value, text,
+                               exec_intent=None, exec_value=None):
+        self._pending = {
+            "intent": intent,
+            "value": value,
+            "text": text,
+            "source": self._confirm_source,
+            "expires": time.monotonic() + self._confirm_ttl,
+            # The prompt is labelled by capability, but the skill call can
+            # differ (a bulk wipe prompts as DELETE_MEMORY_BULK and executes
+            # DELETE_MEMORY with value "all").
+            "exec_intent": exec_intent or intent,
+            "exec_value": value if exec_value is None else exec_value,
+        }
+        self.logger.info(
+            f"SEC-11: {intent} held; a separate confirmation turn is required")
+        from Security.permissions import Permissions
+
+        return (Permissions.confirmation_for(intent)
+                or f"I won't {intent.lower()} without your confirmation.")
+
+    def _gate_destructive(self, intent, value, corrected, spoken_confirmation):
+        if (spoken_confirmation and self._is_bare_confirmation(corrected)
+                and self._pending_is_ours()
+                and self._pending["intent"] == intent):
+            return self._consume_pending(f"source={self._confirm_source}")
+        # Includes the "yes shut down" case: the confirmation word is
+        # present, but the action was not prompted for in an earlier turn.
+        return self._hold_for_confirmation(intent, value, corrected)
+
+    def _gate_bulk_wipe(self, spoken_confirmation):
+        if (spoken_confirmation and self._pending_is_ours()
+                and self._pending["intent"] == "DELETE_MEMORY_BULK"):
+            self.logger.warning(
+                "SEC-08: bulk memory wipe confirmed in a separate turn")
+            self._pending = None
+            return self.command.execute("DELETE_MEMORY", "all")
+        if spoken_confirmation and not self._pending_is_ours():
+            self.logger.warning(
+                "SEC-11: bulk wipe asked for and confirmed in one turn; "
+                "refused and re-prompted")
+        return self._hold_for_confirmation(
+            "DELETE_MEMORY_BULK", "all",
+            "delete all memories",
+            exec_intent="DELETE_MEMORY", exec_value="all")
 
     def _clarify(self, corrected):
         to_check = (corrected or "").strip().lower()

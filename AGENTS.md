@@ -190,8 +190,11 @@ Still open, in priority order:
 - **TD-08** / SEC-02 — `Config/*.json` is gitignored and untracked; the token
   field is empty today. The next real token must go only into the ignored
   file, never an example.
-- **SEC-11 remainder** — request-id correlation and any second factor for
-  destructive remote commands (rate limit + audit log are in).
+- **SEC-11** correlation + destructive second factor — **CLOSED 2026-09-30**:
+  `X-MAXIE-Request-Id` on every response (echoed in the audit log), accepted
+  commands audited with the text redacted, and a destructive action can only
+  be confirmed by a bare "yes" in a *later* turn, bound to the client that
+  asked and expiring after `confirm_ttl_seconds`.
 - **TD-23 note** — signal-handler deferral is closed, but `run.py` still
   relies on the interpreter reaching its `finally`; a hard `SIGKILL` skips
   cleanup (accepted risk).
@@ -200,7 +203,7 @@ Still open, in priority order:
 
 - A bug fix ships with a test that **fails without the fix**. Verify both
   directions before claiming it is done.
-- Never reduce the test count. Baseline is 357 passing, 2 skipped.
+- Never reduce the test count. Baseline is 378 passing, 2 skipped.
 - `python Tests/run_tests.py` and `python -m compileall -q .` must both stay
   clean at the end of every change.
 - Mark hardware-dependent results **HARDWARE UNVERIFIED** until run on the real

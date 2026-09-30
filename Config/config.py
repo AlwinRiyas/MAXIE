@@ -71,6 +71,9 @@ class Config:
             "rate_limit_per_minute": 60,
             "max_connections": 16,
             "audit_log": False,
+            # SEC-11: how long a destructive command stays armed awaiting
+            # its own confirmation turn.
+            "confirm_ttl_seconds": 60,
         },
         "logging": {
             # TD-17: user utterances are redacted in the log by default.
@@ -159,6 +162,7 @@ class Config:
             int, 1, 100000),
         ("system", "remote_server", "max_connections"): (int, 1, 1024),
         ("system", "remote_server", "audit_log"): (bool, None, None),
+        ("system", "remote_server", "confirm_ttl_seconds"): (int, 5, 600),
         # system.logging
         ("system", "logging", "log_utterances"): (bool, None, None),
         ("system", "logging", "retention_days"): (int, 0, 3650),

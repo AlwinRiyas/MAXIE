@@ -1,7 +1,9 @@
 import json
 import os
 import tempfile
+import json
 import unittest
+from pathlib import Path
 
 from Config.config import Config, ConfigError
 
@@ -177,6 +179,31 @@ class ConfigValidationTest(unittest.TestCase):
         data = self._data()
         Config.validate(data)
         self.assertEqual(data["system"]["remote_server"]["port"], 8778)
+
+    def test_confirm_ttl_default_is_declared(self):
+        # SEC-11: the confirmation window is a documented tunable, not a
+        # magic number buried in the router.
+        self.assertEqual(
+            Config.DEFAULT_SYSTEM["remote_server"]["confirm_ttl_seconds"], 60)
+        example = json.loads(
+            (Path(Config.PROJECT_ROOT) / "Config"
+             / "system_config.example.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            example["remote_server"]["confirm_ttl_seconds"],
+            Config.DEFAULT_SYSTEM["remote_server"]["confirm_ttl_seconds"])
+
+    def test_confirm_ttl_bounds(self):
+        Config.validate(self._data(confirm_ttl_seconds=30))
+        with self.assertRaises(ConfigError):
+            Config.validate(self._data(confirm_ttl_seconds=0))
+        with self.assertRaises(ConfigError):
+            Config.validate(self._data(confirm_ttl_seconds=100000))
+
+    def test_confirm_ttl_is_coerced_from_a_numeric_string(self):
+        data = self._data(confirm_ttl_seconds="45")
+        Config.validate(data)
+        self.assertEqual(data["system"]["remote_server"]["confirm_ttl_seconds"],
+                         45)
 
     def test_numeric_string_is_coerced(self):
         data = self._data()

@@ -77,13 +77,18 @@ class ConversationEngine:
     # Public control
     # ----------------------------------------------------------
 
-    def submit_text(self, text):
+    def submit_text(self, text, source=None):
         """Thread-safe entry point for the remote server: returns a
-        Future that resolves with MAXIE's response string."""
+        Future that resolves with MAXIE's response string.
+
+        ``source`` identifies the caller (the remote server passes the
+        client address) so a destructive confirmation can be bound to the
+        device that asked for it (SEC-11).
+        """
         from concurrent.futures import Future
 
         future = Future()
-        self.remote_queue.put((str(text), future))
+        self.remote_queue.put((str(text), future, source))
         self._ensure_remote_worker()
         return future
 
@@ -101,7 +106,7 @@ class ConversationEngine:
                 break
             if item is None:
                 continue
-            _text, future = item
+            future = item[1]
             if not future.done():
                 future.set_exception(shutdown_error)
 
@@ -135,9 +140,18 @@ class ConversationEngine:
                 continue
             if item is None:
                 return
-            text, future = item
+            text, future, source = item
 
-            response = self._process_remote(text)
+            # SEC-11: bind the destructive-confirmation state to the caller
+            # for the duration of this one turn.
+            binder = getattr(self.router, "bind_source", None)
+            if binder is not None:
+                binder(source)
+            try:
+                response = self._process_remote(text)
+            finally:
+                if binder is not None:
+                    binder(None)
             if not future.done():
                 future.set_result(response)
             if response:

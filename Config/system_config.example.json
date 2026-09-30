@@ -39,7 +39,8 @@
     "allowed_origins": [],
     "rate_limit_per_minute": 60,
     "max_connections": 16,
-    "audit_log": false
+    "audit_log": false,
+    "confirm_ttl_seconds": 60
   },
   "logging": {
     "log_utterances": false,

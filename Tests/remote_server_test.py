@@ -7,6 +7,31 @@ import urllib.request
 from concurrent.futures import Future
 
 from Interface.remote_server import RemoteServer
+from Logs.logger import Logger
+
+
+class _CapturingLogger:
+    """Wraps the real Logger, recording INFO lines for assertions."""
+
+    def __init__(self, real, sink):
+        self._real = real
+        self._sink = sink
+
+    def info(self, message):
+        self._sink.append(str(message))
+
+    def warning(self, message):
+        self._sink.append(str(message))
+
+    def error(self, message):
+        self._sink.append("ERROR " + str(message))
+
+    def debug(self, message):
+        pass
+
+    @staticmethod
+    def utterance(text):
+        return Logger.utterance(text)
 
 
 class RemoteServerTest(unittest.TestCase):
@@ -29,7 +54,16 @@ class RemoteServerTest(unittest.TestCase):
                               timeout=2, config=config)
         self.assertTrue(server.start())
         self.server = server
+        # Capture the MAXIE log stream for audit assertions. A real
+        # Logger is used (not a bare mock) so utterance redaction behaves
+        # exactly as it does in production.
+        self._log_lines = []
+        real = Logger.instance()
+        server.logger = _CapturingLogger(real, self._log_lines)
         return server._server.server_address[1]
+
+    def logger_output(self):
+        return list(self._log_lines)
 
     def _request(self, method, port, path, body=None, token=None,
                  headers=None, raw_body=None):
@@ -302,6 +336,84 @@ class RemoteServerTest(unittest.TestCase):
         for thread in threads:
             thread.join(timeout=5)
         self.assertEqual(self._drain(httpd, 0), 0, "slots must be released")
+
+    def test_request_id_is_returned_on_every_response(self):
+        port = self._start(on_command=lambda text: self._future_response("ok"))
+        code, _, headers = self._raw_response("GET", port, "/health")
+        self.assertEqual(code, 200)
+        request_id = headers.get("X-MAXIE-Request-Id")
+        self.assertTrue(request_id, "every response carries a request id")
+        self.assertEqual(len(request_id), 8)
+
+    def test_request_ids_differ_between_requests(self):
+        port = self._start(on_command=lambda text: self._future_response("ok"))
+        seen = set()
+        for _ in range(4):
+            _, _, headers = self._raw_response("GET", port, "/health")
+            seen.add(headers.get("X-MAXIE-Request-Id"))
+        self.assertEqual(len(seen), 4)
+
+    def test_request_id_present_on_error_responses(self):
+        port = self._start(token="secret", on_command=lambda text: None)
+        code, _, headers = self._raw_response("GET", port, "/health")
+        self.assertEqual(code, 401)
+        self.assertTrue(headers.get("X-MAXIE-Request-Id"))
+
+    def test_accepted_command_is_audited_with_its_request_id(self):
+        config = {"audit_log": True}
+        port = self._start(
+            on_command=lambda text: self._future_response("ok"),
+            config=config,
+        )
+        code, _ = self._request("POST", port, "/command", {"text": "hello"})
+        self.assertEqual(code, 200)
+        entries = [line for line in self.logger_output()
+                   if "REMOTE_AUDIT" in line]
+        self.assertTrue(entries, "an accepted command must be audited")
+        self.assertTrue(any('"outcome": 200' in line for line in entries))
+        self.assertTrue(any("request_id" in line for line in entries))
+
+    def test_audit_entry_redacts_the_command_text(self):
+        config = {"audit_log": True}
+        port = self._start(
+            on_command=lambda text: self._future_response("ok"),
+            config=config,
+        )
+        self._request("POST", port, "/command",
+                      {"text": "my bank pin is 4021"})
+        blob = "\n".join(self.logger_output())
+        self.assertNotIn("4021", blob, "audit log must not keep the words")
+        self.assertIn("REMOTE_AUDIT", blob)
+
+    def test_rejected_command_is_audited_with_the_request_id(self):
+        config = {"audit_log": True}
+        port = self._start(token="s3cret", on_command=lambda text: None,
+                           config=config)
+        code, _, headers = self._raw_response("GET", port, "/health")
+        self.assertEqual(code, 401)
+        entries = [line for line in self.logger_output()
+                   if "REMOTE_AUDIT" in line]
+        self.assertTrue(entries)
+        self.assertIn(headers["X-MAXIE-Request-Id"], "\n".join(entries))
+
+    def test_command_callback_receives_the_caller_identity(self):
+        seen = {}
+
+        def capture(text, source=None):
+            seen["source"] = source
+            return self._future_response("ok")
+
+        port = self._start(on_command=capture)
+        code, _ = self._request("POST", port, "/command", {"text": "hi"})
+        self.assertEqual(code, 200)
+        self.assertTrue(seen["source"], "source must be passed to on_command")
+        self.assertIn("127.0.0.1", seen["source"])
+
+    def test_single_argument_callback_still_works(self):
+        port = self._start(on_command=lambda text: self._future_response("ok"))
+        code, payload = self._request("POST", port, "/command", {"text": "hi"})
+        self.assertEqual(code, 200)
+        self.assertEqual(payload["response"], "ok")
 
     def test_ceiling_does_not_reject_sequential_requests(self):
         config = {"max_connections": 1, "rate_limit_per_minute": 10000}
