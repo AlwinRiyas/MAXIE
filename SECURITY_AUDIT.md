@@ -134,6 +134,17 @@ explicitly first, and re-verify the whitespace-only-token fail-closed case.
 detail to the log at WARNING. Return correct HTTP status codes
 (400/401/404/413/429/500) and stop splicing `ok: True` into error bodies.
 
+**Status: CLOSED (2026-09-30).** Remote half: `/command` and `/voice` return
+only generic text (`"Command could not be started."`, `"Voice processing
+failed."`, `"MAXIE took too long to respond."`) with correct status codes; the
+raw exception goes to `logger.error` only. Provider half: `OllamaClient` returns
+the constant `GENERIC_ERROR_MESSAGE` and never embeds the internal URL, and
+`AIEngine._is_offline_message` stops all four failure strings from reaching
+memory. Asserted in `Tests/remote_server_test.py`
+(`test_error_body_does_not_disclose_internal_detail`,
+`test_voice_error_uses_status_500_and_no_internal_detail`) and
+`Tests/ai_test.py` / `Tests/ollama_client_test.py`.
+
 ### SEC-06 — HIGH — Unvalidated persistent write path from free-form speech
 `Brain/brain_router.py` `_auto_learn()`; `Memory/memory_engine.py:71-73`
 
@@ -203,6 +214,12 @@ shutdown.
 **Fix:** per-token rate limit; append-only audit log of timestamped commands with
 a source address; consider a second factor (a rotating nonce) for destructive
 commands.
+
+**Status: MOSTLY CLOSED (2026-09-30).** Per-client token-bucket rate limiting
+(429 past the bucket) and the optional append-only audit log are in
+(`remote_server.max_connections` also caps live request threads — TD-07).
+Still open: a request id for correlation, and any second factor for
+destructive commands.
 
 ### SEC-12 — MEDIUM — Blocking network I/O in a signal handler
 `Core/core_manager.py:95-98` → `Interface/remote_server.py:122`

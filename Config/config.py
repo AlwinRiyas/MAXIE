@@ -61,6 +61,7 @@ class Config:
             "max_command_bytes": 65536,
             "allowed_origins": [],
             "rate_limit_per_minute": 60,
+            "max_connections": 16,
             "audit_log": False,
         },
         "allow_local_power_control": False,

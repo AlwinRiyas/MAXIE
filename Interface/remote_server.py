@@ -53,6 +53,83 @@ class _TokenBucket:
         return False
 
 
+class _BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer with a hard ceiling on live request threads.
+
+    The per-IP token bucket bounds *request rate*, not concurrent
+    connections, so a client that opens many sockets at once would still
+    grow the thread pool without bound (TD-07 / SEC-11). This subclass
+    caps concurrent request threads: past the ceiling, new sockets are
+    closed immediately instead of being serviced. Rate limiting is the
+    first line; this is the backstop for a burst.
+    """
+
+    daemon_threads = True
+    allow_reuse_address = True
+    # Small accept backlog so a connection flood cannot park forever in
+    # the kernel queue either.
+    request_queue_size = 16
+
+    def __init__(self, server_address, handler_class, max_threads=16):
+        super().__init__(server_address, handler_class)
+        self.max_threads = max(1, int(max_threads))
+        self._active = 0
+        self._counted = set()
+        self._active_lock = threading.Lock()
+
+    def process_request(self, request, client_address):
+        with self._active_lock:
+            if self._active >= self.max_threads:
+                self._shed(request)
+                return
+            self._active += 1
+            self._counted.add(request)
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._release(request)
+            self._shed(request)
+            raise
+
+    def shutdown_request(self, request):
+        # The stdlib calls this immediately after the response has been
+        # written, which is the tightest point at which the slot can come
+        # back. Note the ceiling therefore counts connections whose
+        # response is still being flushed: a client that re-connects in
+        # the same microsecond its last byte lands can briefly exceed
+        # max_threads. That is why the default ceiling is 16 rather
+        # than something tight.
+        try:
+            super().shutdown_request(request)
+        finally:
+            self._release(request)
+
+    def _release(self, request):
+        with self._active_lock:
+            if request in self._counted:
+                self._counted.discard(request)
+                self._active -= 1
+
+    def _shed(self, request):
+        try:
+            request.sendall(
+                b"HTTP/1.1 503 Service Unavailable\r\n"
+                b"Content-Length: 0\r\n"
+                b"Connection: close\r\n\r\n"
+            )
+        except OSError:
+            pass
+        try:
+            super().shutdown_request(request)
+        except OSError:
+            pass
+
+    @property
+    def active_threads(self):
+        with self._active_lock:
+            return self._active
+
+
 class RemoteServer:
     """Threaded HTTP server bridging phone/CLI text -> ConversationEngine."""
 
@@ -76,6 +153,9 @@ class RemoteServer:
         self.allowed_origins = {
             str(o).rstrip("/") for o in self._config.get("allowed_origins", [])
         }
+        self.max_connections = max(
+            1, int(self._config.get("max_connections", 16))
+        )
         self.audit_log = bool(self._config.get("audit_log", False))
 
         if self.host not in LOOPBACK_HOSTS and not self.token:
@@ -182,7 +262,10 @@ class RemoteServer:
 
             handler = self._build_handler()
             try:
-                self._server = ThreadingHTTPServer((self.host, self.port), handler)
+                self._server = _BoundedThreadingHTTPServer(
+                    (self.host, self.port), handler,
+                    max_threads=self.max_connections,
+                )
             except OSError as error:
                 self.logger.error(f"Remote server bind failed: {error}")
                 self._server = None

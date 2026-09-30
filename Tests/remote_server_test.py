@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -64,6 +65,21 @@ class RemoteServerTest(unittest.TestCase):
         future = Future()
         future.set_result(text)
         return future
+
+    def _drain(self, httpd, expected, timeout=5.0):
+        """Wait for the server's live-request count to reach ``expected``.
+
+        A connection slot is released as its response is flushed, which is
+        a hair after the client reads the last byte, so any assertion
+        about a post-response slot count has to tolerate that ordering.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            active = httpd.active_threads
+            if active == expected:
+                return active
+            time.sleep(0.01)
+        return httpd.active_threads
 
     def _raw_response(self, method, port, path):
         url = f"http://127.0.0.1:{port}{path}"
@@ -240,6 +256,65 @@ class RemoteServerTest(unittest.TestCase):
             codes.append(code)
         self.assertIn(200, codes)
         self.assertIn(429, codes)
+
+    # --------------------------------------------------
+    # TD-07 / SEC-11: concurrency ceiling
+    # --------------------------------------------------
+
+    def test_max_connections_from_config(self):
+        server = RemoteServer(host="127.0.0.1", port=0,
+                              config={"max_connections": 7})
+        self.assertEqual(server.max_connections, 7)
+        self.assertEqual(RemoteServer(host="127.0.0.1", port=0)
+                         .max_connections, 16, "default ceiling")
+
+    def test_connection_ceiling_sheds_beyond_limit(self):
+        release = threading.Event()
+        started = threading.Event()
+
+        def slow(text):
+            started.set()
+            release.wait(5)
+            return self._future_response("ok")
+
+        config = {"max_connections": 2, "rate_limit_per_minute": 10000}
+        port = self._start(on_command=slow, config=config)
+        httpd = self.server._server
+        self.assertEqual(httpd.max_threads, 2)
+
+        # Saturate the ceiling with concurrent slow commands.
+        threads = []
+        for _ in range(2):
+            thread = threading.Thread(
+                target=self._request, args=("POST", port, "/command"),
+                kwargs={"body": {"text": "hi"}}, daemon=True,
+            )
+            thread.start()
+            threads.append(thread)
+        self.assertTrue(started.wait(5), "slow handler never started")
+        self.assertEqual(self._drain(httpd, 2), 2, "ceiling never saturated")
+
+        # A third concurrent connection is shed, not serviced.
+        code, _ = self._request("POST", port, "/command", {"text": "hi"})
+        self.assertEqual(code, 503)
+
+        release.set()
+        for thread in threads:
+            thread.join(timeout=5)
+        self.assertEqual(self._drain(httpd, 0), 0, "slots must be released")
+
+    def test_ceiling_does_not_reject_sequential_requests(self):
+        config = {"max_connections": 1, "rate_limit_per_minute": 10000}
+        port = self._start(
+            on_command=lambda text: self._future_response("ok"),
+            config=config,
+        )
+        for _ in range(5):
+            code, _ = self._request("GET", port, "/health")
+            self.assertEqual(code, 200)
+            # A truly sequential client waits for its slot to drain; the
+            # server releases it as the response is flushed.
+            self.assertEqual(self._drain(self.server._server, 0), 0)
 
 
 if __name__ == "__main__":

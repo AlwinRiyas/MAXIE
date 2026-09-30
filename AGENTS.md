@@ -165,22 +165,26 @@ commit and test evidence:**
   lock-guarded, idempotent `Maxie.shutdown()`; signal handler defers cleanup to
   the main thread; `set_audio` re-syncs disk↔memory. **TD-17 partial**: log file
   now owner-only `0600`; the 3× utterance logging remains.
+- **B1** Ollama failure-string persistence (commit `bf7d978`): `_is_offline_message`
+  classifies all four failure sources (connection/timeout/generic/empty) and
+  nothing reaches stored context (`Tests/ai_test.py::OfflineFilteringTest`).
+- **TD-07 / SEC-05** remote boundary (2026-09-30): all error bodies are generic
+  with correct status codes, provider messages never leak the internal URL, and
+  `_BoundedThreadingHTTPServer` caps live request threads
+  (`remote_server.max_connections`, default 16).
 
 Still open, in priority order:
-- **B1** `AI/ai_engine.py:82-84` — only 1 of 4 Ollama failure strings is
-  filtered; the other 3 are persisted as conversation context and re-injected
-  forever.
-- **TD-07 / SEC-05 (remote half)** — remote server unbounded bodies/threads
-  (SEC-03/04/05/11): body caps, rate limits, `compare_digest`, and generic
-  error bodies are already in place (`bfb49cb`); remaining is the remote
-  half of SEC-05 (LLM URL/provider disclosure over `/command`) plus a
-  thread/body ceiling review.
 - **TD-08** / SEC-02 — `Config/*.json` is gitignored and untracked; the token
   field is empty today. The next real token must go only into the ignored
   file, never an example.
 - **TD-17 remainder** — 3× plaintext utterance logging + retention sweep.
 - **TD-27** — no config schema validation; a bad `port` surfaces as a raw
   traceback in `run.py`.
+- **SEC-11 remainder** — request-id correlation and any second factor for
+  destructive remote commands (rate limit + audit log are in).
+- **TD-23 note** — signal-handler deferral is closed, but `run.py` still
+  relies on the interpreter reaching its `finally`; a hard `SIGKILL` skips
+  cleanup (accepted risk).
 
 ## Working rules for changes
 
