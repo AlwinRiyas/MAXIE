@@ -63,6 +63,14 @@ class SkillManager:
             and not Permissions.requires_confirmation(intent)
         ]
 
+    # Skills that can describe what they changed, so an agent run has
+    # something to roll back (ROADMAP 12.9). Keyed by intent, because the
+    # capability belongs to the skill and the intent is how it is reached.
+    STRUCTURED = {
+        "HOME_CONTROL": ("home_control",
+                         "Skills.home_control_skill", "HomeControlSkill"),
+    }
+
     def execute_args(self, intent, arguments):
         """Validate named arguments against the intent's schema, then
         dispatch the primary one as the skill's usual string value.
@@ -86,7 +94,29 @@ class SkillManager:
             self._logger().warning(f"Skill schema rejected: {error}")
             return f"I need to be clearer about that: {error}"
 
+        structured = self.execute_structured(intent, arguments)
+        if structured is not None:
+            return structured
+
         return self.execute(intent, value)
+
+    def execute_structured(self, intent, arguments):
+        """Dispatch to a skill that reports a `SkillResult`, or None.
+
+        None means "this intent has no structured skill", and the caller
+        falls back to the ordinary string path. A structured skill is
+        passed the *named* arguments, because that is the only way it can
+        both act and say what it changed.
+        """
+        entry = self.STRUCTURED.get(intent)
+        if entry is None:
+            return None
+        name, module, class_name = entry
+        skill = self._skill(name, module, class_name)
+        method = getattr(skill, "execute_result", None)
+        if method is None:
+            return None
+        return method(**dict(arguments or {}))
 
     @staticmethod
     def _logger():
@@ -231,6 +261,24 @@ class SkillManager:
                 "youtube", "Skills.youtube_skill", "YouTubeSkill"
             )
             return skill.search(value or extra or "")
+        if intent in ("HOME_CONTROL", "HOME_UNLOCK"):
+            # Phase 13: no backend is required. When none is configured the
+            # skill says so; it never invents a device.
+            skill = self._skill(
+                "home_control", "Skills.home_control_skill", "HomeControlSkill"
+            )
+            # `extra` is a dict from the router (action + optional level) or
+            # a bare action string from a simpler caller.
+            if isinstance(extra, dict):
+                home_action = str(extra.get("action", "on"))
+                home_level = extra.get("level")
+            else:
+                home_action = str(extra) if extra else "on"
+                home_level = None
+            if home_action in ("status", "list"):
+                return skill.status(value or "")
+            return skill.execute(value or "", home_action, home_level,
+                                 intent=intent)
         if intent == "RECOMMEND":
             skill = self._skill(
                 "recommend", "Skills.recommendation_skill",

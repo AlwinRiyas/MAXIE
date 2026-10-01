@@ -1,0 +1,26 @@
+{
+  "_comment": "Copy to home_devices.json and edit. That file is gitignored. Devices are named explicitly on purpose: guessing which of four lights you meant is how a voice assistant switches off the wrong room. `type` must be one of light, lamp, fan, plug, thermostat, lock, speaker, tv, blind -- anything else is ignored rather than guessed at. `target` is the backend identifier: a Home Assistant entity id (light.kitchen) or a Hue light name/id.",
+  "devices": [
+    {
+      "name": "living room light",
+      "type": "light",
+      "room": "living room",
+      "target": "light.living_room",
+      "aliases": ["sofa light"]
+    },
+    {
+      "name": "porch lamp",
+      "type": "lamp",
+      "room": "",
+      "target": "light.porch",
+      "aliases": []
+    },
+    {
+      "name": "front door",
+      "type": "lock",
+      "room": "",
+      "target": "lock.front_door",
+      "aliases": ["main door"]
+    }
+  ]
+}

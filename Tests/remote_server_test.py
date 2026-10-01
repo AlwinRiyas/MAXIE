@@ -469,5 +469,157 @@ class RemoteServerTest(unittest.TestCase):
             self.assertEqual(self._drain(self.server._server, 0), 0)
 
 
+class LifecycleTest(RemoteServerTest):
+    """TD-24: start()/stop() must be mutually exclusive and must actually
+    leave nothing listening.
+
+    The previous `stop()` cleared `_server` under the lock and shut down
+    outside it, so a concurrent `start()` could see "not running" while the
+    old socket was still open. A restart then either hit EADDRINUSE or left
+    two servers behind one handle.
+    """
+
+    def test_stop_is_idempotent(self):
+        server = RemoteServer(host="127.0.0.1", port=0, token="",
+                              on_command=lambda *a: None, timeout=2)
+        self.assertTrue(server.start())
+        self.assertTrue(server.running)
+        server.stop()
+        server.stop()  # must not raise
+        self.assertFalse(server.running)
+
+    def test_a_restart_after_stop_rebinds_the_same_port(self):
+        server = RemoteServer(host="127.0.0.1", port=0, token="",
+                              on_command=lambda *a: None, timeout=2)
+        self.assertTrue(server.start())
+        first = server._server.server_address[1]
+        server.stop()
+
+        # Same port on purpose: this is what a restart does, and it is what
+        # raced before.
+        server = RemoteServer(host="127.0.0.1", port=first, token="",
+                              on_command=lambda *a: None, timeout=2)
+        self.addCleanup(server.stop)
+        self.assertTrue(
+            server.start(),
+            "the port must be free immediately after stop() returns",
+        )
+        self.assertEqual(server._server.server_address[1], first)
+        code, _body = self._request("GET", first, "/ui")
+        self.assertEqual(code, 200)
+
+    def test_start_is_idempotent_and_does_not_double_bind(self):
+        server = RemoteServer(host="127.0.0.1", port=0, token="",
+                              on_command=lambda *a: None, timeout=2)
+        self.addCleanup(server.stop)
+        self.assertTrue(server.start())
+        first = server._server
+        self.assertTrue(server.start())
+        self.assertIs(
+            server._server, first,
+            "a second start() must be a no-op, not a second bind",
+        )
+
+    def test_concurrent_start_and_stop_leave_one_consistent_state(self):
+        """The race itself: many threads calling start() and stop() at once.
+
+        Whatever the interleaving, the object must end in a state where
+        `running` agrees with whether a thread is alive.
+        """
+        server = RemoteServer(host="127.0.0.1", port=0, token="",
+                              on_command=lambda *a: None, timeout=2)
+        errors = []
+
+        def churn(index):
+            try:
+                for _ in range(6):
+                    if index % 2:
+                        server.start()
+                    else:
+                        server.stop()
+            except Exception as error:  # noqa: BLE001
+                errors.append(repr(error))
+
+        threads = [threading.Thread(target=churn, args=(i,))
+                   for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=20)
+        for t in threads:
+            self.assertFalse(t.is_alive(), "churn must not deadlock")
+
+        self.assertEqual(errors, [])
+        server.stop()
+
+        self.assertFalse(server.running)
+        self.assertIsNone(server._thread)
+        if server._stopped_thread is not None:
+            self.assertFalse(
+                server._stopped_thread.is_alive(),
+                "a thread that outlived its join timeout is reported, not "
+                "silently forgotten (TD-24)",
+            )
+
+    def test_stop_reports_a_thread_that_will_not_exit(self):
+        """If `serve_forever` cannot be shut down, the caller is told instead
+        of `running` claiming a healthy listener."""
+        server = RemoteServer(host="127.0.0.1", port=0, token="",
+                              on_command=lambda *a: None, timeout=2)
+        self.assertTrue(server.start())
+
+        def refuse():
+            time.sleep(30)
+
+        server._thread = threading.Thread(target=refuse, daemon=True,
+                                          name="stubborn")
+        server._thread.start()
+        started = time.time()
+        server.stop()
+        elapsed = time.time() - started
+
+        self.assertLess(elapsed, 8.0, "stop() must stay bounded (TD-23)")
+        self.assertFalse(server.running,
+                         "a server that may still be up is not 'running'")
+        self.assertIsNotNone(
+            getattr(server, "_stopped_thread", None),
+            "the surviving thread must be recorded, not discarded",
+        )
+        server._stopped_thread = None
+
+    def test_start_reports_a_thread_that_dies_immediately(self):
+        """A listening claim with nothing listening is worse than a failure."""
+        server = RemoteServer(host="127.0.0.1", port=0, token="",
+                              on_command=lambda *a: None, timeout=2)
+        original = server._build_handler
+
+        def build():
+            handler = original()
+            raise AssertionError  # never used; guards against a silent path
+
+        server._build_handler = build
+        # Bind for real, then make serve_forever die on entry.
+        server._build_handler = original
+        real_forever = None
+
+        import Interface.remote_server as module
+        server_cls = module._BoundedThreadingHTTPServer
+        original_forever = server_cls.serve_forever
+
+        def die_immediately(self, *args, **kwargs):
+            raise RuntimeError("cannot serve")
+
+        server_cls.serve_forever = die_immediately
+        try:
+            started = server.start()
+        finally:
+            server_cls.serve_forever = original_forever
+
+        self.assertFalse(started,
+                         "start() must report a server that never served")
+        self.assertFalse(server.running)
+        self.assertIsNone(server._thread)
+
+
 if __name__ == "__main__":
     unittest.main()

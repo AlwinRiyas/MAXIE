@@ -3,7 +3,11 @@
 **Verified:** 2026-09-28, against the working tree. Every entry carries a
 `file:line` reference. Severity is impact on a real user, not code aesthetics.
 
-Totals: **47 items** — 7 critical, 10 high, 16 medium, 14 low/dead.
+Totals: **48 items** — 7 critical, 10 high, 17 medium, 14 low/dead.
+(TD-48 was added on 2026-10-01 after the concurrency probe found it.)
+**Open as of 2026-10-01: 24.** 25 further entries are closed or deleted and
+annotated in place; the numbering is deliberately preserved so every
+`file:line` reference in the other documents still resolves.
 
 **Status update (2026-09-29):** TD-01, TD-02 and TD-03 are **CLOSED** (commits
 `030c9e2`, `7dc99b4`); TD-04, TD-15 and TD-32 are **CLOSED in the live,
@@ -15,8 +19,25 @@ closed items are annotated, not renumbered, so line references stay stable.
 TD-47 and TD-17 are **CLOSED** (utterances redacted to length+digest at INFO
 behind `logging.log_utterances`, log file owner-only, retention sweep added);
 TD-07/SEC-05 (unbounded bodies, threads and error-body detail) is **CLOSED** in
-the remote boundary. The suite sits at **559 tests, 2 skipped**. The register
+the remote boundary. The suite sits at **678 tests, 2 skipped**. The register
 numbering is still preserved.
+
+**Status update (2026-10-01):** verified line-by-line against the source, not
+against the working tree. **21 further entries are now CLOSED** and are marked
+`CLOSED` in place: TD-05, TD-06, TD-09, TD-10, TD-11, TD-12, TD-13, TD-18,
+TD-19, TD-20, TD-21, TD-28, TD-30, TD-31, TD-34, TD-40, TD-41, TD-42, TD-43,
+TD-48, and the `Tests/state_test.py` entry. **SEC-07** (the confirmation gate
+keyed on intent names rather than capabilities) is CLOSED in `SECURITY_AUDIT.md`.
+TD-14 is **CLOSED by deletion** — `Core/event_bus.py`
+and `Tests/event_test.py` are gone, along with four other zero-subscriber
+modules (`Brain/command_parser.py`, `Brain/intent_detector.py`,
+`Voice/voice_config.py`, `Config/voice_config.py`,
+`Automation/application_discovery.py`).
+
+The suite sits at **678 tests, 2 skipped**, across 38 files. That figure is now
+recorded identically in `TEST_STATUS.md`, `ROADMAP.md` and
+`DEVELOPMENT_STATUS.md`; three different baselines were live here before, which
+is its own kind of debt.
 
 Severity note: TD-08 was initially rated CRITICAL as "live token committed".
 That was **overstated** — verification showed the `remote_server.token` value in
@@ -94,6 +115,13 @@ help.
 `VoiceState` instead of polling independently.
 
 ### TD-05 Energy-VAD fallback deadlocks in quiet rooms
+
+**Status: CLOSED 2026-10-01.** The ratio is a bounded config tunable
+(`audio.vad_noise_ratio`, default 1.8, `Config/config.py:148,219`), and
+`Voice/audio_recorder.py:104` calls `reset_noise()` on every listen. Covered by
+`Tests/vad_test.py`: `test_noise_floor_calibration`,
+`test_real_room_speech_ratio_accepted`,
+`test_default_noise_ratio_is_config_derived`.
 `Voice/vad_engine.py:109` + `Voice/audio_recorder.py:185-187`
 The gate demands speech > 3× ambient RMS; real rooms show 1.5–2×. `reset_noise()`
 has no production caller, so the floor never recovers.
@@ -103,6 +131,12 @@ ambient ≥ 0.004 RMS causes every utterance to be dropped after a 20 s timeout.
 production caller for `reset_noise()`.
 
 ### TD-06 One-shot load latch disables STT permanently on first failure
+
+**Status: CLOSED 2026-10-01.** `Voice/transcriber.py:41-46` sets the latch
+only on success, `available` is a real property consulted by the pipeline, and
+`Voice/transcriber.py:57-78` retries with backoff. Covered by
+`Tests/transcriber_test.py`: `test_transient_failure_is_retried_not_latched`,
+`test_shared_cached_across_calls`.
 `Voice/transcriber.py:37-39`, `Voice/vad_engine.py:52-62`
 Both set the "attempted" flag *before* trying. `speech_pipeline.py:14-16` gates
 on `sounddevice`, not on the transcriber.
@@ -112,6 +146,13 @@ the UI still reports "VOICE MODE".
 exponential-backoff retry.
 
 ### TD-07 Remote server accepts unbounded bodies and unbounded threads
+
+**Status: CLOSED 2026-09-30** (with SEC-05). Bodies are capped with a
+`413` pre-check and a bounded re-read (`Interface/remote_server.py:433-461`), a
+per-token rate limit is applied (`:509-517`), the live thread count is capped by
+`remote_server.max_connections` (`:74-123`), and `/voice` uses the shared
+`Transcriber` (`Core/core_manager.py:94`). Covered by
+`Tests/remote_server_test.py` (33 tests).
 `Interface/remote_server.py:234-238`, `:268-275`, `:100`, `:107`
 `Content-Length` is read straight into memory; `ThreadingHTTPServer` with
 `daemon_threads = True` is unbounded. `core_manager.py:75` reloads Whisper per
@@ -120,6 +161,12 @@ exponential-backoff retry.
 *Fix:* body cap, token-bucket rate limit, bounded pool, cached transcriber.
 
 ### TD-08 `Config/system_config.json` is git-tracked and holds a user-editable token field
+
+**Status: CLOSED 2026-09-28.** `.gitignore` excludes `Config/*.json` with
+`!Config/*.example.json`, and the three live files were untracked via
+`git rm --cached`. `git ls-files Config` now returns only `__init__.py`,
+`config.py`, `voice_config.py` and the three example files. (`Config/voice_config.py`
+has since been deleted as dead code.)
 `Config/system_config.json` (tracked; `.gitignore` only has `Config/tts_models/`)
 Worktree file is 607 bytes of live configuration against a 0-byte HEAD blob.
 *Impact:* the current `remote_server.token` value is **empty** (verified), so no
@@ -135,6 +182,10 @@ ship a `.example.json`, and add a pre-commit check for a non-empty token.
 ## S2 — High
 
 ### TD-09 Config read rewrites the file; malformed config silently destroys settings
+
+**Status: CLOSED.** `Config/config.py:411-446` writes only when a file is
+missing, and backs a malformed file up before rewriting it. Covered by
+`Tests/config_test.py::ConfigWriteSyncTest`.
 `Config/config.py:155-156`, `:152-153`
 An 18-byte config grows to 603 bytes on a mere read. `{ this is not json ]]`
 becomes `data = {}` and defaults are written over the user's file with no log
@@ -143,6 +194,9 @@ and no backup. `Config.load()` runs at import time (`:288`).
 loudly on parse failure.
 
 ### TD-10 `stop()` orphans queued futures
+
+**Status: CLOSED.** The console loop drains, resolves and joins
+(`Conversation/conversation_engine.py:95-120`).
 `Conversation/conversation_engine.py:90-95`, `:111`
 `running` is cleared before the `None` sentinel is enqueued, and the loop checks
 `while self.running.is_set()` first, so the sentinel is usually never consumed.
@@ -152,12 +206,19 @@ loudly on parse failure.
 `set_exception(RuntimeError("MAXIE is shutting down"))`, then `join(timeout=…)`.
 
 ### TD-11 `get_context(max_turns=0)` returns the whole table
+
+**Status: CLOSED.** `Memory/memory_database.py:347` returns no rows for
+`max_turns=0`, and `prune_context` caps the table on insert (`:273-285`; cap in
+`Config/config.py:69,192`).
 `Memory/memory_database.py:194`
 The guard is falsy-based. The `conversation` table is never pruned in production
 and no query uses `created_at`.
 *Fix:* `if max_turns is not None:` plus a retention sweep.
 
 ### TD-12 `migrate_json` stores the literal string `"True"`
+
+**Status: CLOSED.** `Memory/memory_database.py:382-405` coerces on
+migration and writes a one-shot marker so it cannot re-run.
 `Memory/memory_database.py:226-228`
 Booleans are stringified, so the value is lost; the live DB has four such rows,
 and `recall_any("the")` will speak `"True"` back.
@@ -166,6 +227,10 @@ Runs on every `MemoryEngine.__init__` (`memory_engine.py:21`).
 migration marker.
 
 ### TD-13 Dead `StateManager` prints on every transition
+
+**Status: CLOSED.** `Core/state_manager.py` is deleted and
+`Tests/state_test.py` covers the live `VoiceStateMachine` (34 tests), so the
+stray `[STATE] …` print is gone with it.
 `Core/state_manager.py:18-20`
 Zero production references, yet `Tests/state_test.py` instantiates it, so
 `[STATE] …` pollutes stdout after the unittest summary. The tested class is not
@@ -179,6 +244,16 @@ callbacks; a raising callback aborts the rest. No unsubscribe, no dedup, no
 lock. Zero production subscribers.
 *Fix:* delete, or fix (copy list, isolate errors, add unsubscribe + lock) and
 actually wire the GUI's 200 ms poll to it.
+**Status: CLOSED 2026-10-01 by deletion.** The first option was taken:
+`Core/event_bus.py` and `Tests/event_test.py` are gone. The GUI was not wired to
+a bus it never had a publisher for, so 16.4 is resolved as "not applicable" for
+the bus and the GUI's 200 ms status poll is unchanged. A sweep of the tree for
+the same shape removed four more zero-subscriber modules: `Brain/command_parser.py`,
+`Brain/intent_detector.py`, `Voice/voice_config.py`, `Config/voice_config.py` and
+`Automation/application_discovery.py` (the last superseded by
+`Skills/application_registry.py`). `Voice/audio_stream.py` is the one remaining
+module with no production caller; it is deliberate scaffolding for streaming
+capture and is covered by `Tests/audio_stream_test.py`.
 
 ### TD-15 GUI `_auto_loop`: off-thread tkinter, 100% CPU spin, no mic lock
 `Ui/gui.py:185-191`
@@ -229,10 +304,17 @@ pre-fix router line.
 ## S3 — Medium
 
 ### TD-18 `search()` LIKE metacharacters unescaped
+
+**Status: CLOSED.** `Memory/memory_database.py:228-238` escapes `\`,
+`%` and `_` and uses `ESCAPE '\'`.
 `Memory/memory_database.py:150` — `search("%")` and `search("_")` return every
 row. Escape and add `ESCAPE '\'`.
 
 ### TD-19 `any_recall` produces confident wrong answers
+
+**Status: CLOSED.** `Memory/memory_database.py:158+` tokenises on word
+boundaries, drops a stopword list, weights by IDF and applies a minimum score.
+Covered by `Tests/memory_test.py`.
 `Memory/memory_database.py:113`, `:104`; `Memory/memory_engine.py:36-38`
 Substring scoring with `len(w) > 2` admits `"the"`. Probe:
 `any_recall("tell me about the institute")` → `{"key": "college", "value":
@@ -240,9 +322,16 @@ Substring scoring with `len(w) > 2` admits `"the"`. Probe:
 *Fix:* word-boundary regex, stopword list, IDF weighting, minimum score.
 
 ### TD-20 Non-timing-safe token comparison
+
+**Status: CLOSED.** `Interface/remote_server.py:242` uses
+`hmac.compare_digest`.
 `Interface/remote_server.py:61` — use `hmac.compare_digest`.
 
 ### TD-21 Internal exception strings disclosed to clients
+
+**Status: CLOSED 2026-09-30** (with SEC-05). Error bodies are generic,
+status codes are correct, provider messages stay in the log, and the internal
+provider URL is not echoed. Covered by `Tests/remote_server_test.py`.
 `Interface/remote_server.py:75`, `:296`, `:304`; `AI/ollama_client.py:74`
 Errors are echoed to the caller, `ollama_client` leaks the internal URL, and
 `/voice` returns HTTP **200** with `ok: True` spliced next to `{"error": ...}`.
@@ -306,11 +395,43 @@ setting for anything out of range or uncoercible. `load()` calls it, and
 launcher cases fail against the old traceback path.
 
 ### TD-28 `BargeInListener` leaked on the exception path
+
+**Status: CLOSED 2026-10-01.** Voice mode already released the listener in a
+`finally` (`Conversation/conversation_engine.py:254-255,379-386`). Text mode had
+the same defect — `_cleanup_voice()` sat after the loop, so a raising
+`_handle_command` unwound past it and leaked the listener with its PortAudio
+stream open. `_start_text_mode` now wraps its loop in the same `finally`
+(`Conversation/conversation_engine.py:261-277`). Covered by
+`Tests/conversation_state_test.py::TextModeCleanupTest` (4 tests), which fails
+against the old shape.
 `Conversation/conversation_engine.py:366-372`
 `_cleanup_voice` sits after the `while` loop and is unreachable from any failing
 iteration.
 
+### TD-48 `MemoryDatabase` shares one connection across threads with no lock
+`Memory/memory_database.py:28` — `sqlite3.connect(..., check_same_thread=False)`
+tells sqlite3 not to enforce thread affinity; it does **not** make the
+`Connection` safe to use from two threads at once. The main loop writes through
+`BrainRouter` while `MAXIE-RemoteTTS` and the remote worker write through the
+same object, so interleaved cursor state and transactions were possible. Worse,
+`add_context()` called `prune_context()` *inside* its own `with self._conn:`,
+so the inner block's exit committed the insert early.
+
+Probed, not theorised: four threads × 25 iterations of `add_context` + `save`
+lost **70% of rows** and raised a stream of
+`InterfaceError('bad parameter or other API misuse')`.
+
+**Status: CLOSED 2026-10-01.** Every public method is wrapped in a module-level
+`_synchronized` decorator holding a `threading.RLock` (`RLock` because
+`add_context` -> `prune_context` and `migrate_json` -> `save` re-enter). The
+nested prune now runs after the insert commits. Same probe after the fix: 100%
+of rows, zero errors. Covered by
+`Tests/memory_test.py::test_concurrent_writes_do_not_lose_rows`, verified to fail
+against the pre-fix shape.
+
 ### TD-29 `MAXIE_REVIEW/` is a stale full duplicate of the codebase
+**Status: STILL OPEN (2026-10-01).** Untouched — it was requested, so it is a
+deliverable rather than a bug, and deleting it is the owner's call.
 Repo-root `MAXIE_REVIEW/` mirrors every source file, including its own `Tests/`.
 It doubles the search surface, guarantees drift, and `Tests/run_tests.py`
 discovery may pick up both copies. **This is the one item here that is a
@@ -318,6 +439,9 @@ deliverable rather than a bug — it was requested. Flagged so the audit trail i
 complete.**
 
 ### TD-30 Barge-in drops legitimate interrupts
+
+**Status: CLOSED.** The fixed 2.2 s ceiling no longer rejects longer
+interrupts, and both stop-phrase lists now come from `VoiceCommands`.
 `Voice/barge_in_listener.py:197-200`; `Conversation/conversation_engine.py:294-306`
 The `>2.2 s` echo guard rejects *any* longer utterance, so "stop, actually what
 time is it" never interrupts. The `while is_speaking()` check at `:294` precedes
@@ -327,6 +451,10 @@ divergent stop-phrase sets (`:29-41` vs `Voice/voice_commands.py:13-28`)
 contradict the "single source of truth" claim in `voice_commands.py:1-7`.
 
 ### TD-31 `voice.wav` CWD collision and leaked PortAudio streams
+
+**Status: CLOSED.** `Voice/speech_pipeline.py:24-45` writes into a
+temp directory and removes the file, and PortAudio streams are closed on a
+failed `start()`.
 `Voice/speech_pipeline.py:19` writes a **relative** path and never deletes it,
 violating `AGENTS.md`'s own path convention. `Ui/gui.py:150` vs `:185-191` can
 open two `InputStream`s on one device. `audio_recorder.py:110-113` leaks a handle
@@ -352,9 +480,14 @@ capture/playback exclusion; `ConversationEngine` closes every turn in a
 (`:447` is unreachable); `done.wait()` at `:480` has no timeout, leaking a
 thread per speak; `_ensure_pytts` is unsynchronised around non-thread-safe
 `pyttsx3.init()`; `shutdown()` joins nothing. `_detect_engine:61-64` also
-bypasses readiness, so a forced-but-missing engine reports itself available —
-**which is the live on-disk state** (`"tts_engine": "piper"`,
-`"piper_voice": "xyz"`).
+bypasses readiness, so a forced-but-missing engine reports itself available.
+**Status: STILL OPEN (2026-10-01).** The live config is no longer the evidence
+it once was — `Config/audio_config.json` reads `tts_engine: "auto"` and
+`piper_voice: "en_US-lessac-medium"`, so the test suite is no longer leaving a
+forced-missing engine behind. That was the config half of ROADMAP 4.11 and it is
+now DONE. The thread half is untouched: `_stop_signal` is still never read,
+`done.wait()` at `:480` is still untimed, and `_ensure_pytts` is still
+unsynchronised.
 
 ---
 
@@ -362,16 +495,16 @@ bypasses readiness, so a forced-but-missing engine reports itself available —
 
 | ID | Location | Issue |
 |---|---|---|
-| TD-34 | `AI/ollama_client.py:28-33` | `is_available()` has zero callers — the only health check is dead. |
+| TD-34 | `AI/ollama_client.py:28-33` | `is_available()` has zero callers — the only health check is dead. **CLOSED** — live, TTL-cached callers in `AI/ai_engine.py:71,91,133`. |
 | TD-35 | `Config/config.py:106` | `LOGGER = None`, never read. |
 | TD-36 | `Memory/memory_database.py:234-235` | `get_database()` has zero callers; speculative re-export. |
 | TD-37 | `Config/config.py:283-285` | `Config.which` is a bare `shutil.which` passthrough, used 20×. |
 | TD-38 | `Interface/remote_server.py:20` | `"" in LOOPBACK_HOSTS` is unreachable. |
 | TD-39 | `Interface/remote_server.py:315-328` | `_ui_cache` is a class attribute with a racy double-read. |
-| TD-40 | `Memory/memory_engine.py:30-31`; `memory_database.py:80-81` | `update` silently drops `kind`, reclassifying notes as facts. |
-| TD-41 | `Memory/memory_engine.py:71-73` | First-5-words key derivation collides; last-write-wins with no audit. |
-| TD-42 | `Config/config.py:155`, `:169` | `dict(defaults)` shallow copy aliases nested class attributes; `set_audio:222-223` mutates them. |
-| TD-43 | `Interface/remote_server.py:283-284`, `:320` | `os`/`tempfile` imported inside methods. |
+| TD-40 | `Memory/memory_engine.py:30-31`; `memory_database.py:80-81` | `update` silently drops `kind`, reclassifying notes as facts. **CLOSED** — `Memory/memory_database.py:112-119` preserves `kind`. |
+| TD-41 | `Memory/memory_engine.py:71-73` | First-5-words key derivation collides; last-write-wins with no audit. **CLOSED** — `Memory/memory_engine.py:56-82` uses a sha1 content hash. |
+| TD-42 | `Config/config.py:155`, `:169` | `dict(defaults)` shallow copy aliases nested class attributes; `set_audio:222-223` mutates them. **CLOSED** — `Config/config.py:415` uses `copy.deepcopy`; `set_audio` re-syncs. |
+| TD-43 | `Interface/remote_server.py:283-284`, `:320` | `os`/`tempfile` imported inside methods. **CLOSED** — `Interface/remote_server.py:21-33` imports at module level. |
 | TD-44 | `Ui/gui.py:12-17` | `_load_autostart` uses `exec_module` on every construction, bypassing the import cache. |
 | TD-45 | `Conversation/conversation_engine.py:131-143` vs `:249-261` | Exit logic duplicated and already drifted. |
 | TD-46 | `remote_server.py:21`; `conversation_engine.py:287,293,303`; `gui.py:135,185,241` | Magic numbers not in `Config` while every other tunable is. |
@@ -383,15 +516,15 @@ bypasses readiness, so a forced-but-missing engine reports itself available —
 
 These are test-side debt, not code debt, but they hid real bugs:
 
-- `Tests/learning_test.py:68` — `assertGreaterEqual(x is not None, True)` is
+- `Tests/learning_test.py:158` — `assertGreaterEqual(x is not None, True)` is
   `assertGreaterEqual(True, True)`; it passes whether or not recall works.
-- `Tests/config_test.py:29-32` — hardcodes `Config.ASSISTANT_NAME == "Maxie"`
+- `Tests/config_test.py:35-36` — hardcodes `Config.ASSISTANT_NAME == "Maxie"`
   and `USER_NAME == "Alwin"`, duplicating `DEFAULT_SYSTEM` and breaking on any
   legitimate rename.
-- `Tests/state_test.py` — tests the dead `StateManager` and *enshrines* the
-  stray `print` as acceptable.
-- `Tests/ui_test.py` — 8 tests, **0** for `MaxieGUI`; `test_import_gui_is_safe`
-  is literally `import Ui.gui  # noqa: F401`.
+- `Tests/ui_test.py:133-134` — `test_import_gui_is_safe` is literally
+  `import Ui.gui  # noqa: F401`. No longer the *only* GUI coverage
+  (`Tests/gui_loop_test.py` exercises 11 real `MaxieGUI` methods), but the
+  import-only test is still counted as one.
 - `Tests/tts_test.py:87-107` — piper path is fully mocked end-to-end and never
   touches real synthesis or playback.
 - `Tests/tts_test.py:150-160` — this test **writes** `"piper_voice": "xyz"` and

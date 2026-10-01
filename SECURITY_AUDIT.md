@@ -83,14 +83,37 @@ clone of this repository carries whatever the config held at commit time. The
 config also leaks non-secret personal state (user name, mic choice, TTS engine).
 `AGENTS.md`'s claim that tokens live in gitignored files is false today.
 
-**Fix (do this first, before any commit):**
-1. `Config/*.json` and `Config/*.local.json` → `.gitignore`.
-2. `git rm --cached Config/system_config.json Config/personality.json Config/audio_config.json`.
-3. Nothing to rotate today (the value is empty) — but rotate if any real token
-   has ever been set on this machine.
-4. Ship a `Config/system_config.example.json` with no secrets.
-5. Add a CI/pre-commit check that fails if a tracked `Config/*.json` contains a
-   non-empty `token`.
+**Status: CLOSED 2026-09-28, hardened 2026-10-01.** Steps 1, 2 and 4 are
+done: `Config/*.json` is ignored with `!Config/*.example.json`, the three live
+files are untracked, and the three example files are committed. No token needs
+rotating (the value was empty throughout).
+
+**What the first pass missed.** The fix was a snapshot of one afternoon, and
+step 5 was never done — nothing stopped a later `git add -f
+Config/system_config.json` or an edited `.gitignore` from reintroducing it. Two
+things were found while closing that gap:
+
+1. **`Memory/memory.json` was tracked in three commits while an ignore rule for
+   it sat in `.gitignore` the whole time.** `.gitignore` does not untrack
+   anything already committed. The file carried real user facts
+   (`"gym": "6 PM"`, a college name). It is now untracked, but it remains in
+   history — rewriting that is a force-push and the owner's call.
+2. Key material and the SQLite store had no ignore rules at all.
+
+`Tests/repo_hygiene_test.py` (14 tests) now asks git directly, so the exposure
+fails on the commit that reintroduces it:
+
+- no live `Config/*.json` tracked, while the three `*.example.json` stay tracked;
+- every named live config is `git check-ignore`-confirmed;
+- **no file that `.gitignore` lists is still tracked** — the generic check that
+   would have caught `Memory/memory.json` on day one;
+- committed examples contain no credential-shaped value and no private address;
+- no tracked file contains a `remote_token` literal;
+- `*.pem`/`*.key`/`id_rsa`/`.env` and `Memory/*.db` are ignored.
+
+**Still open (owner's decision, not code):** `Memory/memory.json` is in history.
+Purging it needs `git filter-repo` plus a force-push and a re-clone by anyone who
+already has the repo. The content is three gym/college facts, not a credential.
 
 ### SEC-03 — HIGH — Wildcard CORS on a token-gated API
 `Interface/remote_server.py:163-168`
@@ -164,15 +187,32 @@ explicit confirmation for anything persisting; a cap on facts per session;
 stopword/verb-list based keying instead of positional truncation; and never let
 auto-learned text reach a privileged position in the system prompt.
 
-### SEC-07 — MEDIUM — Confirmed actions are keyed on strings, not capabilities
+### SEC-07 — MEDIUM — CLOSED 2026-10-01 — Capabilities, not a known-bad list
 `Security/permissions.py`; `Brain/brain_router.py` confirmation gate
 
-The destructive-action gate matches intent strings. A new or renamed intent can
-bypass it by omission.
+*The finding:* the gate matched intent **names** in a hand-maintained
+`DESTRUCTIVE` set, so a new destructive intent ran ungated if whoever added it
+forgot to touch that second list. The docstring claimed the opposite.
 
-**Fix:** invert the model — default-deny. Every skill declares its capability
-(`read`, `mutate`, `destructive`, `network`), and the gate checks the capability
-rather than a known-bad list. Unknown intents get no tool access at all.
+*What it is now.* Every allowlisted intent declares its capabilities
+(`CAPABILITIES`: `power.system`, `memory.irreversible`, `device.unlock`, …) and
+the gate checks `DESTRUCTIVE_CAPABILITIES` instead of a list of names.
+`DESTRUCTIVE` is **derived** at import, so it cannot drift from
+`CAPABILITIES`. Both directions of developer error are now safe:
+
+- forgetting to declare an intent's capability → gated (fail-closed),
+- declaring a benign capability → deliberate, and visible as a diff here.
+
+An allowlisted-but-undeclared intent is gated. An intent that is neither
+classified nor allowlisted (the router's `UNKNOWN`) is not gated, because it
+cannot execute either — `can_execute` already refuses it, and a refusal is not
+a confirmation prompt.
+
+`can_execute` remains default-deny: only `ALLOWED` can run, so no capability
+declaration ever widens what MAXIE may do.
+
+Covered by `Tests/permissions_test.py::CapabilityDeclarationTest` (7 tests).
+Verified in both directions — reverting `permissions.py` fails them.
 
 ### SEC-08 — MEDIUM — Bulk memory delete is untested and unguarded
 `Brain/brain_router.py` `DELETE_MEMORY` with `"all"` / `"everything"`
@@ -341,11 +381,12 @@ useful (`Tests/context_summary_test.py`):
 
 ## 5. Remediation order
 
-1. **SEC-02** — stop the token leak before any commit. Rotate it.
+1. ~~**SEC-02** — stop the token leak before any commit. Rotate it.~~ **CLOSED** 2026-09-28; test-enforced since 2026-10-01. `Memory/memory.json` still in history (owner call).
 2. **SEC-01** — body caps and rate limit. Cheap, removes a DoS.
 3. **SEC-05**, **SEC-04**, **SEC-03** — remote boundary hygiene.
 4. **SEC-06** — close the persistent prompt-injection channel.
-5. **SEC-07** — invert the permission model to default-deny capabilities.
+5. ~~**SEC-07** — invert the permission model to default-deny capabilities.~~
+   **CLOSED 2026-10-01.**
 6. **SEC-09**, **SEC-10**, **SEC-11**, **SEC-12** — hardening and auditability.
 
 Everything above is compatible with the existing design philosophy: MAXIE is

@@ -247,6 +247,15 @@ _MEDIA = {"name": "action", "type": "enum", "required": False,
 SKILL_SCHEMAS = {}
 
 
+_DEVICE = {"name": "device", "type": "string", "required": True,
+           "description": "Device name as spoken, e.g. 'living room light'",
+           "max_length": 80}
+_HOME_ACTION = {"name": "action", "type": "enum", "required": False,
+                "description": "on, off, toggle, set, or status",
+                "values": ["on", "off", "toggle", "set", "status"],
+                "default": "on"}
+
+
 def _register(schema):
     SKILL_SCHEMAS[schema.name] = schema
     return schema
@@ -294,3 +303,14 @@ _register(SkillSchema("SHUTDOWN", "Shut the computer down (needs the user's "
                                  "confirmation in a separate turn)"))
 _register(SkillSchema("RESTART", "Restart the computer (needs the user's "
                                  "confirmation in a separate turn)"))
+_register(SkillSchema(
+    "HOME_CONTROL", "Control a smart-home device (light, fan, plug, "
+                    "thermostat, blind)",
+    (_DEVICE, _HOME_ACTION,
+     {"name": "level", "type": "int", "required": False,
+      "description": "Brightness or level percent 0-100, for the 'set' action",
+      "minimum": 0, "maximum": 100}), "device"))
+_register(SkillSchema(
+    "HOME_UNLOCK", "Unlock a door lock (needs the user's confirmation in a "
+                   "separate turn)",
+    (_DEVICE,), "device"))

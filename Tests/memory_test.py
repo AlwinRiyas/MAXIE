@@ -174,6 +174,48 @@ class MemoryRecallQualityTest(MemoryTestBase):
             "word-boundary matching must not match 'cat' inside 'catalog'",
         )
 
+    def test_concurrent_writes_do_not_lose_rows(self):
+        """Four threads inserting both conversation rows and memories must
+        not interleave the single SQLite connection.
+
+        The previous implementation had `check_same_thread=False` but no
+        lock; with concurrent `add_context` + `prune_context` it lost ~70% of
+        rows and raised `InterfaceError`s. That is the exact regression this
+        test prevents.
+        """
+        import threading
+
+        db = MemoryDatabase(self.db_path)
+        n_threads, n_rounds = 4, 25
+
+        errors = []
+
+        def run(thread_id):
+            try:
+                for i in range(n_rounds):
+                    db.add_context("user", f"t{thread_id}-{i}")
+                    db.save(f"k{thread_id}-{i}", f"v{thread_id}-{i}")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(repr(exc))
+
+        threads = []
+        for tid in range(n_threads):
+            threads.append(threading.Thread(target=run, args=(tid,)))
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        expected = n_threads * n_rounds
+        self.assertEqual(errors, [], "no database errors under concurrency")
+        self.assertEqual(db.context_size(), expected)
+        self.assertEqual(db.count(), expected)
+        self.assertEqual(db.recall("k3-24"), "v3-24")
+        ctx = db.get_context(expected)
+        texts = [text for _, text in ctx]
+        self.assertIn("t0-0", texts)
+        self.assertIn(f"t{n_threads - 1}-{n_rounds - 1}", texts)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -81,7 +81,7 @@ of that foundation would multiply every defect.
 - **2.5** Observable state changes emitted to subscribers — **DONE** (`subscribe(callback(prev, cur))`)
 - **2.6** Turn always returns to `IDLE`, including empty input — **DONE** (`ConversationEngine.end_turn()`)
 
-**Status note:** implemented and test-green (208 tests) in the working tree;
+**Status note:** implemented and test-green (678 tests) in the working tree;
 awaiting review/commit.
 
 ## Phase 3 — VAD · **PARTIAL**
@@ -234,13 +234,30 @@ and capped. Two things are still honest gaps: no skill supplies a compensating
 action (12.9), and long conversations are trimmed rather than summarised
 (12.10).
 
-## Phase 13 — Home automation · **MISSING**
+## Phase 13 — Home automation · **DONE** (2026-10-01)
 
-- **13.1** Device/entity registry — **MISSING**
-- **13.2** LLM → tool mapping — **MISSING**
-- **13.3** State tracking — **MISSING**
+- **13.1** Device/entity registry — **DONE** (`Home/device_registry.py`)
+- **13.2** LLM → tool mapping — **DONE** (`HOME_CONTROL` in the skill schema;
+  `HOME_UNLOCK` is deliberately *not* offered to the model)
+- **13.3** State tracking — **DONE** (`home_state.json`, written only after a
+  confirmed call)
 - **13.4** Confirm-before-act — **DONE** (reuse Phase 11)
-- **13.5** Discovery adapters (Home Assistant, Hue) — **MISSING**
+- **13.5** Discovery adapters (Home Assistant, Hue) — **DONE**
+  (`Home/home_assistant.py`, `Home/hue.py`)
+
+Devices are declared explicitly in `Config/home_devices.json` — an ignored
+file, with `home_devices.example.json` committed in its place. Resolution
+takes the *longest* name, alias, or "<room> <type>" pair contained in the
+utterance, so "the kitchen ceiling light" cannot resolve to a bare "light"
+declared elsewhere. A device whose `type` is not one MAXIE can address is
+skipped rather than guessed at.
+
+Two deliberate omissions. There is no discovery: MAXIE is told what exists
+instead of scanning a network for it. And the model is never asked to select
+a home action — it is deterministic and gated, so a chatty LLM cannot turn a
+sentence into a door unlocking. The unlock path routes through Phase 11's
+confirmation gate keyed on the capability, so a `HOME_UNLOCK` request is
+refused until a bare "yes" arrives in a later turn.
 
 ## Phase 14 — User profile / personalisation · **PARTIAL**
 
@@ -305,7 +322,7 @@ action (12.9), and long conversations are trimmed rather than summarised
 - **Stop the suite mutating real config** — **DONE** (2026-09-28). `Tests/tts_test.py`
   now redirects `Config.FILES` to a temp dir; a new guard test asserts the live
   `Config/audio_config.json` is byte-identical after a run. Proven to fail
-  without the isolation. Baseline is now **326 tests, 2 skipped**.
+  without the isolation. Baseline is now **678 tests, 2 skipped**.
 - Removing the dead `Core/state_manager.py` and pointing tests at the live
   machine — **DONE 2026-09-29** (`Tests/state_test.py` now covers
   `VoiceStateMachine`; the dead module is deleted).

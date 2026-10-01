@@ -1,9 +1,31 @@
+import functools
 import json
 import math
 import os
 import re
 import sqlite3
+import threading
 from datetime import datetime
+
+
+def _synchronized(method):
+    """Serialise every public call on one connection.
+
+    `check_same_thread=False` only tells sqlite3 *not* to enforce thread
+    affinity; it does not make the connection safe to use from two threads at
+    once. Two threads sharing a `Connection` interleave cursor state and
+    transactions, and sqlite raises `InterfaceError` or silently commits the
+    other's partial work. Probed at 70% row loss with four threads writing.
+
+    An `RLock` rather than a `Lock` because methods call each other
+    (`add_context` -> `prune_context`, `migrate_json` -> `save`) and a plain
+    lock would deadlock on itself.
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
 
 
 class MemoryDatabase:
@@ -12,6 +34,9 @@ class MemoryDatabase:
     Tables:
       memory(key TEXT PRIMARY KEY, value TEXT, kind TEXT, updated_at TEXT)
       conversation(id INTEGER PRIMARY KEY, role TEXT, text TEXT, created_at TEXT)
+
+    One connection, one lock. The remote worker thread and the main loop both
+    write here, so every public method takes `self._lock`.
     """
 
     def __init__(self, db_path=None):
@@ -25,6 +50,7 @@ class MemoryDatabase:
             os.makedirs(directory, exist_ok=True)
 
         self.db_path = db_path
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -36,6 +62,7 @@ class MemoryDatabase:
             Config.memory_config().get("conversation_cap", 500)
         )
 
+    @_synchronized
     def _create_tables(self):
         with self._conn:
             self._conn.execute(
@@ -82,6 +109,7 @@ class MemoryDatabase:
                 """
             )
 
+    @_synchronized
     def close(self):
         try:
             self._conn.close()
@@ -92,6 +120,7 @@ class MemoryDatabase:
     # Memory CRUD
     # ----------------------------------------------------------
 
+    @_synchronized
     def save(self, key, value, kind="fact"):
         key = key.strip().lower()
         stamp = datetime.now().isoformat()
@@ -108,6 +137,7 @@ class MemoryDatabase:
                 (key, value, kind, stamp),
             )
 
+    @_synchronized
     def update(self, key, value):
         """TD-40: update the value without silently reclassifying the kind."""
         key = key.strip().lower()
@@ -118,6 +148,7 @@ class MemoryDatabase:
             )
         return cur.rowcount > 0
 
+    @_synchronized
     def recall(self, key):
         cur = self._conn.execute(
             "SELECT value FROM memory WHERE key = ?",
@@ -126,6 +157,7 @@ class MemoryDatabase:
         row = cur.fetchone()
         return row["value"] if row else None
 
+    @_synchronized
     def any_recall(self, key):
         """Exact match fallback: return any memory whose key or value
         overlaps with keywords from the query."""
@@ -230,6 +262,7 @@ class MemoryDatabase:
         """TD-18: '%' and '_' in the query must not act as wildcards."""
         return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
+    @_synchronized
     def search(self, term):
         safe = self._escape_like(term.strip().lower())
         pattern = f"%{safe}%"
@@ -241,6 +274,7 @@ class MemoryDatabase:
         )
         return [{"key": r["key"], "value": r["value"]} for r in cur.fetchall()]
 
+    @_synchronized
     def delete(self, key):
         with self._conn:
             cur = self._conn.execute(
@@ -248,12 +282,14 @@ class MemoryDatabase:
             )
             return cur.rowcount > 0
 
+    @_synchronized
     def all_memories(self):
         cur = self._conn.execute(
             "SELECT key, value FROM memory ORDER BY updated_at DESC"
         )
         return [{"key": r["key"], "value": r["value"]} for r in cur.fetchall()]
 
+    @_synchronized
     def count(self):
         cur = self._conn.execute("SELECT COUNT(*) AS c FROM memory")
         return cur.fetchone()["c"]
@@ -262,6 +298,7 @@ class MemoryDatabase:
     # Short-term conversation context
     # ----------------------------------------------------------
 
+    @_synchronized
     def add_context(self, role, text):
         stamp = datetime.now().isoformat()
         with self._conn:
@@ -270,8 +307,13 @@ class MemoryDatabase:
                 "VALUES (?, ?, ?)",
                 (role, text, stamp),
             )
-            self.prune_context()
+        # Prune *after* the insert commits. Calling it inside the block above
+        # opened a second `with self._conn:` on the same connection, whose
+        # exit committed the insert early and left the two statements in one
+        # transaction that another thread could interleave with.
+        self.prune_context()
 
+    @_synchronized
     def prune_context(self, cap=None):
         """TD-11: bound the conversation table instead of growing forever."""
         if cap is None:
@@ -289,6 +331,7 @@ class MemoryDatabase:
     # Running context summary (ROADMAP 12.10)
     # ----------------------------------------------------------
 
+    @_synchronized
     def save_summary(self, text, summarised_through):
         """Replace the running summary and note how far it reaches."""
         with self._conn:
@@ -304,6 +347,7 @@ class MemoryDatabase:
                  datetime.now().isoformat()),
             )
 
+    @_synchronized
     def get_summary(self):
         """``(text, summarised_through)`` for the stored summary, or
         ``(None, 0)`` when there is none."""
@@ -318,6 +362,7 @@ class MemoryDatabase:
             return None, 0
         return row["text"], int(row["summarised_through"])
 
+    @_synchronized
     def newest_context_id(self):
         """The id of the newest conversation row, or 0 when empty."""
         row = self._conn.execute(
@@ -325,6 +370,7 @@ class MemoryDatabase:
         ).fetchone()
         return int(row["n"]) if row else 0
 
+    @_synchronized
     def context_rows_before(self, row_id):
         """The conversation rows a summary would have to cover."""
         rows = self._conn.execute(
@@ -333,17 +379,20 @@ class MemoryDatabase:
         ).fetchall()
         return [(r["id"], r["role"], r["text"]) for r in rows]
 
+    @_synchronized
     def context_size(self):
         row = self._conn.execute(
             "SELECT COUNT(*) AS n FROM conversation").fetchone()
         return int(row["n"]) if row else 0
 
+    @_synchronized
     def delete_context_before(self, row_id):
         """Drop rows already covered by the stored summary."""
         with self._conn:
             self._conn.execute(
                 "DELETE FROM conversation WHERE id < ?", (int(row_id),))
 
+    @_synchronized
     def get_context(self, max_turns=10):
         cur = self._conn.execute(
             "SELECT role, text FROM conversation ORDER BY id ASC"
@@ -356,6 +405,7 @@ class MemoryDatabase:
         rows = rows[-max_turns:]
         return [(r["role"], r["text"]) for r in rows]
 
+    @_synchronized
     def clear_context(self):
         with self._conn:
             self._conn.execute("DELETE FROM conversation")
@@ -365,6 +415,7 @@ class MemoryDatabase:
     # Migration from the legacy JSON store
     # ----------------------------------------------------------
 
+    @_synchronized
     def migrate_json(self, json_path):
         """Import any existing Memory/memory.json entries so no user data
         is lost.
@@ -414,6 +465,7 @@ class MemoryDatabase:
             )
         return count
 
+    @_synchronized
     def _meta_get(self, key):
         row = self._conn.execute(
             "SELECT value FROM meta WHERE key = ?", (key,)

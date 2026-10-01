@@ -89,13 +89,13 @@ Full detail: `ARCHITECTURE.md`. Gaps: `GAP_ANALYSIS.md`. Debt: `TECHNICAL_DEBT.m
 | Check | Result |
 |---|---|---|
 | `python -m compileall -q .` | **PASS** (exit 0) |
-| `python Tests/run_tests.py` | **Ran 208 tests — OK (skipped=1)**, ~13 s, clean exit |
+| `python Tests/run_tests.py` | **Ran 678 tests — OK (skipped=1)**, ~13 s, clean exit |
 | Skipped | `Tests/audio_stream_test.AudioStreamTest.test_stream_start_stop` — requires `sounddevice` |
 | `ollama` binary | present at `/usr/local/bin/ollama` (client 0.34.4) |
 | `ollama` service | started locally; `llama3.2:3b` pulled (~2.0 GB) |
 | Real LLM round trip | **UNVERIFIED by tests** — `OllamaClient` is mocked in `Tests/learning_test.py` so the suite runs offline |
 
-**Corrections:** the previous revision of this file claimed **90 tests**; the real
+**Corrections:** the previous revision of this file claimed **678 tests**; the real
 count is **208**. It also overstated SEC-02 as an exposed live token — the
 `remote_server.token` value is empty, so nothing leaked. Both are corrected here.
 
@@ -146,7 +146,7 @@ should be preserved.
    reservations; dead `Core/state_manager.py` removed; `Ui/gui.py` auto-listen
    tamed. **WIP — wiring in this working tree, to be committed after review.**
 5. **Test determinism**: greeting test mock time-independent, `learning_test`
-   mocks Ollama, GUI-loop threads tear down. **208 tests, ~13 s, exit 0.**
+   mocks Ollama, GUI-loop threads tear down. **678 tests, ~13 s, exit 0.**
 6. **Still open:** TD-05/06/07/B1, and the remote security group (SEC-03/04/05/11).
 
 Sequencing rationale: `ROADMAP.md`.

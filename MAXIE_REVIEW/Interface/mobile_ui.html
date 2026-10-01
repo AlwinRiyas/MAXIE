@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>MAXIE</title>
+<style>
+  :root{
+    --bg:#010409;--panel:#0d1117;--card:#161b22;--line:#21262d;
+    --fg:#e6edf3;--muted:#8b949e;--accent:#58a6ff;--green:#7ee787;--red:#f85149;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+    font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  body{display:flex;flex-direction:column;max-width:560px;margin:0 auto;padding:12px}
+  header{display:flex;align-items:center;justify-content:space-between;padding:6px 2px}
+  header h1{font-size:1.15rem;margin:0;letter-spacing:.5px}
+  #status{font-size:.72rem;color:var(--muted)}
+  #status.on{color:var(--green)}
+  #log{flex:1;overflow-y:auto;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:10px;margin:10px 0;display:flex;
+    flex-direction:column;gap:6px;min-height:200px}
+  .msg{align-self:flex-end;background:var(--card);padding:8px 12px;
+    border-radius:14px 14px 4px 14px;max-width:85%;font-size:.95rem;white-space:pre-wrap}
+  .msg.ai{align-self:flex-start;background:#1f6f2f;border-radius:14px 14px 14px 4px}
+  #mic{width:84px;height:84px;border-radius:50%;border:0;margin:6px auto;
+    background:#1f6feb;color:#fff;font-size:.8rem;line-height:1.1;
+    box-shadow:0 4px 22px rgba(31,111,235,.45);transition:.12s}
+  #mic:active,#mic.rec{transform:scale(1.1);background:var(--red)
+    box-shadow:0 4px 22px rgba(248,81,73,.6)}
+  #mic:active,#mic.rec{background:var(--red)}
+  #mic:disabled{background:#30363d;box-shadow:none;color:var(--muted)}
+  .row{display:flex;gap:8px;margin-top:6px}
+  #text{flex:1;background:var(--card);border:1px solid var(--line);border-radius:24px;
+    color:var(--fg);padding:12px 16px;font-size:1rem;outline:none}
+  #go{border:0;border-radius:24px;padding:0 20px;background:#238636;color:#fff;font-size:1rem}
+  .chips{display:flex;gap:6px;overflow-x:auto;padding:6px 0}
+  .chip{background:var(--card);border:1px solid var(--line);color:var(--fg);
+    border-radius:16px;padding:6px 12px;font-size:.8rem;white-space:nowrap}
+  .cfg{display:flex;align-items:center;gap:8px;padding:8px 2px}
+  #token{flex:1;background:var(--card);border:1px solid var(--line);border-radius:10px;
+    color:var(--fg);padding:8px 10px;font-size:.8rem;outline:none}
+  label{font-size:.75rem;color:var(--muted);display:flex;align-items:center;gap:4px}
+</style>
+</head>
+<body>
+  <header>
+    <h1>MAXIE</h1>
+    <span id="status">connecting…</span>
+  </header>
+
+  <div id="log">
+    <div class="msg ai">Hi. I'm MAXIE — ask or tap the mic.</div>
+  </div>
+
+  <div class="chips">
+    <button class="chip" data-cmd="what time is it">Time</button>
+    <button class="chip" data-cmd="weather">Weather</button>
+    <button class="chip" data-cmd="show my todo">Todo</button>
+    <button class="chip" data-cmd="next song">Next</button>
+    <button class="chip" data-cmd="answer the call">Answer call</button>
+    <button class="chip" data-cmd="help">Help</button>
+  </div>
+
+  <button id="mic">Hold to talk</button>
+
+  <div class="row">
+    <input id="text" inputmode="text" placeholder="Type a command…" autocomplete="off">
+    <button id="go">Send</button>
+  </div>
+
+  <div class="cfg">
+    <input id="token" placeholder="token (leave empty if none)">
+    <label><input id="voice" type="checkbox" checked> Voice</label>
+  </div>
+
+<script>
+  const log = document.getElementById('log');
+  const statusEl = document.getElementById('status');
+  const micBtn = document.getElementById('mic');
+  const textEl = document.getElementById('text');
+  const tokenEl = document.getElementById('token');
+  const voiceEl = document.getElementById('voice');
+
+  tokenEl.value = localStorage.getItem('maxie.token') || '';
+  voiceEl.checked = localStorage.getItem('maxie.voice') !== '0';
+  tokenEl.addEventListener('change', () => localStorage.setItem('maxie.token', tokenEl.value));
+  function savePref(){ localStorage.setItem('maxie.voice', voiceEl.checked ? '1' : '0'); }
+  voiceEl.addEventListener('change', savePref);
+
+  function addMsg(text, ai){
+    const d = document.createElement('div');
+    d.className = 'msg' + (ai ? ' ai' : '');
+    d.textContent = text;
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+    if (ai && voiceEl.checked && 'speechSynthesis' in window) {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(String(text).replace(/[<>]/g, ''));
+      speechSynthesis.speak(u);
+    }
+    return d;
+  }
+
+  async function command(text){
+    if (!text.trim()) return;
+    addMsg(text, false);
+    statusEl.textContent = 'thinking…'; statusEl.classList.add('on');
+    try {
+      const res = await fetch('/command', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-MAXIE-Token': tokenEl.value
+        },
+        body: JSON.stringify({ text: text })
+      });
+      const data = await res.json();
+      addMsg(data.response || data.error || 'no response', true);
+      statusEl.textContent = 'listening'; statusEl.classList.add('on');
+    } catch (err) {
+      addMsg('Connection failed: ' + err, true);
+      statusEl.textContent = 'offline'; statusEl.classList.remove('on');
+    }
+  }
+
+  document.getElementById('go').onclick = () => { command(textEl.value); textEl.value = ''; };
+  textEl.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('go').click(); });
+  document.querySelectorAll('.chip').forEach(c =>
+    c.addEventListener('click', () => command(c.dataset.cmd)));
+
+  // ---- Tap-to-talk (Android Chrome / modern mobile) ----
+  let rec = null, speaking = false;
+  function onResult(transcript, final){
+    micBtn.textContent = speaking ? 'Listening…' : 'Hold to talk';
+    micBtn.disabled = false;
+    micBtn.classList.remove('rec');
+    if (final && transcript.trim()) command(transcript.trim());
+  }
+
+  micBtn.addEventListener('touchstart', e => { e.preventDefault(); startRec(); });
+  micBtn.addEventListener('mousedown', startRec);
+  micBtn.addEventListener('touchend', e => { e.preventDefault(); stopRec(); });
+  micBtn.addEventListener('mouseup', stopRec);
+
+  function startRec(){
+    if (rec) return;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { addMsg('Speech recognition not supported by this browser.', true); return; }
+    rec = new SR();
+    rec.lang = 'en-US';
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    rec.continuous = false;
+    rec.onstart = () => { speaking = true; micBtn.textContent = 'Listening…'; micBtn.classList.add('rec'); };
+    rec.onresult = ev => {
+      const t = ev.results[0][0].transcript;
+      speaking = false; stopRec();
+      onResult(t, true);
+    };
+    rec.onerror = () => { speaking = false; stopRec(); onResult('', false); };
+    rec.onend = () => { speaking = false; stopRec(); onResult('', false); };
+    try { rec.start(); } catch (e) { micBtn.disabled = false; micBtn.textContent = 'Hold to talk'; }
+  }
+  function stopRec(){
+    if (rec) { try { rec.stop(); } catch (e) {} rec = null; }
+    micBtn.textContent = 'Hold to talk';
+    micBtn.classList.remove('rec');
+  }
+
+  // health
+  fetch('/health').then(() => {
+    statusEl.textContent = 'connected'; statusEl.classList.add('on');
+  }).catch(() => {
+    statusEl.textContent = 'offline'; statusEl.classList.remove('on');
+  });
+</script>
+</body>
+</html>

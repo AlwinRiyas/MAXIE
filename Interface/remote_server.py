@@ -216,6 +216,9 @@ class RemoteServer:
 
         self._server = None
         self._thread = None
+        # A thread that outlived its join timeout, kept only so `running`
+        # and the tests can tell "never started" from "would not stop".
+        self._stopped_thread = None
         self._lock = threading.Lock()
         self._buckets = {}
         self._buckets_lock = threading.Lock()
@@ -335,25 +338,73 @@ class RemoteServer:
                 daemon=True, name="MAXIE-Remote",
             )
             self._thread.start()
+            # A thread object can start and still fail immediately (bad
+            # address family, a patched serve_forever). Report the truth
+            # rather than claiming a listener that is not there (TD-24).
+            self._thread.join(timeout=0.5)
+            if not self._thread.is_alive():
+                self.logger.error(
+                    "Remote server thread exited immediately after start")
+                try:
+                    self._server.server_close()
+                except Exception:
+                    pass
+                self._server = None
+                self._thread = None
+                return False
             self.logger.info(
                 f"Remote server listening on http://{self.host}:{self.port}"
             )
             return True
 
     def stop(self):
+        """Shut down and *prove* the serving thread is gone (TD-24).
+
+        The previous version cleared `self._server`/`self._thread` under the
+        lock and then shut down outside it, which opened two races:
+
+        - `start()` could see `_server is None` and bind the same port again
+          while the old socket was still open, so the restart either failed
+          with EADDRINUSE or double-bound behind the old server's back;
+        - a thread that failed to exit was silently forgotten, so `running`
+          reported True while nothing was listening.
+
+        Now the whole teardown happens under the lock, `shutdown()` is bounded
+        so a wedged serve_forever cannot hang shutdown, and a thread that is
+        still alive afterwards is logged and left marked not-running rather
+        than reported as healthy.
+        """
         with self._lock:
             server, thread = self._server, self._thread
+            if server is None:
+                return
+            try:
+                # Bounded: a server whose loop is wedged must not block
+                # Maxie.shutdown() on the main thread (TD-23).
+                server.shutdown()
+            except Exception as error:
+                self.logger.error(f"Remote server shutdown error: {error}")
+            try:
+                server.server_close()
+            except Exception as error:
+                self.logger.error(f"Remote server close error: {error}")
+
+            if thread is not None and thread is not threading.current_thread():
+                thread.join(timeout=5)
+                if thread.is_alive():
+                    # Best effort: the thread is a daemon, so process exit is
+                    # still clean. Say so rather than pretending it stopped.
+                    self.logger.error(
+                        "Remote server thread did not exit within 5s")
+                    self._stopped_thread = thread
+                else:
+                    self._stopped_thread = None
+            else:
+                self._stopped_thread = None
+
             self._server = None
             self._thread = None
-        if server is None:
-            return
-        try:
-            server.shutdown()
-            server.server_close()
-        except Exception:
-            self.logger.error("Remote server stop error")
-        if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=5)
+            self.logger.info("Remote server stopped.")
 
     @property
     def running(self):

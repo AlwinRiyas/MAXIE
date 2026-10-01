@@ -1,0 +1,35 @@
+# MAXIE — Python dependencies
+#
+# Install on Windows/Linux:
+#   pip install -r requirements.txt
+#
+# Only numpy, scipy, requests, psutil are required for the core app to start.
+# Voice packages are optional and imported lazily so MAXIE still runs headless.
+
+numpy>=1.26
+scipy>=1.11
+
+# Core networking
+requests>=2.28
+
+# System metrics (system-info skill)
+psutil>=5.9
+
+# --- Optional voice stack ---------------------------------------------------
+# Audio I/O (microphone + speaker hooks). Optional but strongly recommended.
+sounddevice>=0.4.6
+
+# Speech recognition (streaming VAD + transcription)
+torch>=2.0
+silero-vad>=0.5.1
+faster-whisper>=1.0.0
+
+# Optional alternative VAD / TTS
+# webrtcvad>=2.0.10   (optional energy VAD on Windows)
+# pyttsx3>=2.90       (optional Linux TTS fallback)
+
+# --- Natural-voice TTS (replaces the robotic espeak fallback) --------------
+# Run this instead of manual pip — it also downloads the voice model:
+#   python Installers/setup_tts.py --engine piper      (offline, recommended)
+#   python Installers/setup_tts.py --engine edge       (online, Microsoft voice)
+# Uses pipx automatically when the OS blocks system pip (PEP 668).

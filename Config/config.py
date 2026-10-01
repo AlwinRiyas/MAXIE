@@ -94,6 +94,21 @@ class Config:
             "retention_days": 7,
         },
         "allow_local_power_control": False,
+        # Home automation (ROADMAP 13). The defaults keep both backends
+        # disabled: no hub, no token, and a short timeout.
+        "home": {
+            "adapter": "none",
+            "home_assistant": {
+                "url": "http://127.0.0.1:8123",
+                "token": "",
+                "verify_ssl": True,
+            },
+            "hue": {
+                "bridge_ip": "",
+                "username": "",
+            },
+            "timeout_seconds": 3.0,
+        },
     }
 
     DEFAULT_PERSONALITY = {
@@ -153,6 +168,7 @@ class Config:
         ("system", "wake_word_enabled"): (bool, None, None),
         ("system", "auto_listen"): (bool, None, None),
         ("system", "allow_local_power_control"): (bool, None, None),
+        ("system", "home", "timeout_seconds"): (float, 0.1, 10.0),
         # system.ai
         ("system", "ai", "temperature"): (float, 0.0, 2.0),
         ("system", "ai", "max_tokens"): (int, 16, 32768),
@@ -525,6 +541,12 @@ class Config:
         cls.load()
         sys = cls.data["system"]
         return sys.get("memory", dict(cls.DEFAULT_SYSTEM["memory"]))
+
+    @classmethod
+    def home_config(cls):
+        cls.load()
+        sys = cls.data["system"]
+        return sys.get("home", dict(cls.DEFAULT_SYSTEM["home"]))
 
     @classmethod
     def remote_config(cls):

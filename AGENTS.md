@@ -226,7 +226,7 @@ Still open, in priority order:
 
 - A bug fix ships with a test that **fails without the fix**. Verify both
   directions before claiming it is done.
-- Never reduce the test count. Baseline is 559 passing, 2 skipped.
+- Never reduce the test count. Baseline is 678 passing, 2 skipped.
 - `python Tests/run_tests.py` and `python -m compileall -q .` must both stay
   clean at the end of every change.
 - Mark hardware-dependent results **HARDWARE UNVERIFIED** until run on the real

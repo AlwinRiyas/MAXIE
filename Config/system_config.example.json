@@ -53,5 +53,18 @@
     "log_utterances": false,
     "retention_days": 7
   },
+  "home": {
+    "adapter": "none",
+    "home_assistant": {
+      "url": "http://127.0.0.1:8123",
+      "token": "",
+      "verify_ssl": true
+    },
+    "hue": {
+      "bridge_ip": "",
+      "username": ""
+    },
+    "timeout_seconds": 3.0
+  },
   "allow_local_power_control": false
 }

@@ -46,3 +46,21 @@ Memory/memory.json
 Memory/maxie_memory.db*
 Memory/todos.json
 Logs/screenshot.png
+
+# Key material — MAXIE has no reason to hold any, so none may be committed.
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+*.keystore
+
+# Memory/ holds source (memory_database.py) next to user data
+# (maxie_memory.db, memory.json). Only the data is ignored: a committed
+# SQLite store carries every fact the assistant ever wrote down.
+Memory/*.db
+Memory/*.db-wal
+Memory/*.db-shm
+Memory/*.sqlite*
+Config/home_devices.json

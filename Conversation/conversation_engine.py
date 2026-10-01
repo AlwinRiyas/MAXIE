@@ -149,6 +149,16 @@ class ConversationEngine:
                 binder(source)
             try:
                 response = self._process_remote(text)
+            except Exception as error:  # noqa: BLE001
+                # One bad command must not end the session. Without this the
+                # exception unwinds out of the worker *loop*, killing the
+                # thread: the caller waits out its full timeout for a future
+                # nobody resolves, and the phone sees "MAXIE took too long"
+                # instead of the actual fault (reproduced: 30 s stall, then a
+                # silently respawned thread on the next command).
+                self.logger.error(
+                    f"Remote command failed ({source}): {error}")
+                response = self.REMOTE_FAILURE
             finally:
                 if binder is not None:
                     binder(None)
@@ -156,6 +166,17 @@ class ConversationEngine:
                 future.set_result(response)
             if response:
                 self._maybe_speak_remote(response)
+
+    # Announced after a failed turn. Deliberately vague: the detail is in the
+    # log, not in something the user hears read aloud.
+    TURN_FAILURE = "That didn't work. Try saying it again."
+
+    # Said to the caller instead of an exception. Names the symptom rather
+    # than the internals, so a stack trace never crosses the HTTP boundary
+    # (SEC-05) and the phone still gets a spoken reply.
+    REMOTE_FAILURE = (
+        "Something went wrong handling that one, but I'm still here. "
+        "Try again.")
 
     def _process_remote(self, text):
         text = (text or "").strip()
@@ -249,7 +270,11 @@ class ConversationEngine:
 
                 command = command.strip()
                 self._log(f"\nYou : {command}")
-                self._handle_command(command)
+                # TD-32 follow-on: a raising skill must cost one turn, not
+                # the session. Unhandled, the exception left this loop,
+                # ran the `finally` below, and shut MAXIE down -- the user
+                # would have to relaunch after one bad command.
+                self._turn_isolated(command)
         finally:
             # TD-28: cleanup must run even when a loop iteration raises.
             self._cleanup_voice()
@@ -260,20 +285,24 @@ class ConversationEngine:
         self._log("Type your command. 'exit' quits. Commands from the phone")
         self._log("are answered instantly.\n")
 
-        while self.running.is_set():
-            try:
-                command = input("You : ").strip()
-            except (EOFError, KeyboardInterrupt):
-                break
+        # TD-28: the same `finally` voice mode has. A raising command
+        # handler used to exit the loop past the cleanup and leak the
+        # barge-in listener, which holds a PortAudio stream.
+        try:
+            while self.running.is_set():
+                try:
+                    command = input("You : ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    break
 
-            if not command:
-                continue
+                if not command:
+                    continue
 
-            self._log("")
-            self._handle_command(command)
-            self._log("")
-
-        self._cleanup_voice()
+                self._log("")
+                self._turn_isolated(command)
+                self._log("")
+        finally:
+            self._cleanup_voice()
 
     # ----------------------------------------------------------
     # COMMAND HANDLING (shared by voice / text / remote)
@@ -290,6 +319,24 @@ class ConversationEngine:
             return self._handle_command_inner(command)
         finally:
             self.voice_manager.end_turn()
+
+    def _turn_isolated(self, command):
+        """Run one turn so a raising skill cannot end the session.
+
+        Returns the response, or None when the turn failed. Callers in a
+        loop use this instead of `_handle_command` directly; the failure is
+        logged and announced, and the loop continues to the next command.
+        """
+        try:
+            return self._handle_command(command)
+        except Exception as error:  # noqa: BLE001
+            self.logger.error(f"Turn failed for {command!r}: {error}")
+            self._log(f"\n⚠️ That command failed: {error}")
+            try:
+                self._speak_with_barge(self.TURN_FAILURE)
+            except Exception:  # noqa: BLE001 - a dead speaker is not fatal
+                pass
+            return None
 
     def _handle_command_inner(self, command):
         if self._speech_check.is_stop(command):

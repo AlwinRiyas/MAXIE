@@ -294,13 +294,16 @@ class BrainRouter:
                       "TODO_ADD", "TODO_LIST", "TODO_DONE", "TODO_REMOVE",
                       "TODO_CLEAR", "MEDIA_NEXT", "MEDIA_PREVIOUS",
                       "MEDIA_PLAY_PAUSE", "CALL_ANSWER", "CALL_REJECT",
-                      "YOUTUBE_SEARCH", "RECOMMEND"):
+                      "YOUTUBE_SEARCH", "RECOMMEND", "HOME_CONTROL",
+                      "HOME_UNLOCK"):
             # Phase 8.7: argument schema validation. "open", "search",
             # "set volume to" carry no argument; ask instead of executing
             # a skill with an empty value.
             if intent in ARG_REQUIRED and not self._has_argument(value, intent):
                 self.logger.info(f"Router: missing argument for {intent}")
                 return ARG_REQUIRED[intent]
+            if intent in ("HOME_CONTROL", "HOME_UNLOCK"):
+                return self._home_dispatch(intent, value, corrected)
             return self.command.execute(intent, value, corrected)
 
         # ---------------- Memory ----------------
@@ -672,7 +675,110 @@ class BrainRouter:
     # VALUE EXTRACTION
     # ==================================================
 
+    # Words that introduce an action rather than name a device.
+    _HOME_VERBS = ("turn on ", "switch on ", "put on ", "light up ",
+                   "turn off ", "switch off ", "put out ", "toggle ",
+                   "flip ", "set ", "dim ", "unlock ", "lock ")
+
+    def _home_parts(self, text, intent):
+        """Split a home request into (device, action, level).
+
+        Kept in the router rather than the skill so the utterance parsing
+        stays where clarification and the confirmation gate already live.
+        """
+        from Home.home_automation import HomeAutomation
+
+        body = text.strip().lower()
+        action = "on"
+        if intent == "HOME_UNLOCK":
+            action = "on"  # the skill maps on/unlock via the intent
+
+        # Off first: "turn off" must win over "turn on".
+        for markers, wanted in (
+            (("turn off ", "switch off ", "put out "), "off"),
+            (("turn on ", "switch on ", "put on ", "light up "), "on"),
+            (("unlock ", "lock "), "on"),
+            (("toggle ", "flip "), "toggle"),
+            (("dim ",), "set"),
+            (("set ",), "set"),
+        ):
+            for marker in markers:
+                if body.startswith(marker):
+                    action, body = wanted, body[len(marker):]
+                    break
+            else:
+                continue
+            break
+
+        # "is the X on?" / "what state is the X in" are status questions,
+        # not commands -- checked before the device is trimmed so the verb
+        # cannot end up inside the name we look up.
+        question = any(phrase in body for phrase in ("is the ", "are the ",
+                                                      "state", "status"))
+        if question:
+            action = "status"
+            # Strip the question frame: the device is what remains, not
+            # "is the front door".
+            for noise in ("what state is ", "what's the state of ",
+                          "status of ", "is the ", "are the "):
+                if body.startswith(noise):
+                    body = body[len(noise):]
+                    break
+        for suffix in ("?", ".", " on", " in", " right now", " please"):
+            if body.endswith(suffix):
+                body = body[: -len(suffix)].strip()
+                break
+
+        # "the bedroom light to 40" / "brightness 40" -> level
+        level = HomeAutomation.normalise_level(body)
+        for marker in (" to ", " at "):
+            if marker in body:
+                head, tail = body.split(marker, 1)
+                parsed = HomeAutomation.normalise_level(tail)
+                if parsed is not None:
+                    level, body = parsed, head
+                    break
+        if action in ("on", "off") and ("dim" in body or "brightness" in body):
+            action = "set"
+        if action == "set" and level is None:
+            level = HomeAutomation.normalise_level(text)
+        return body.strip(), action, level
+
+    def _home_dispatch(self, intent, value, corrected):
+        """Dispatch a home request, asking rather than guessing."""
+        from Brain.intent_engine import HOME_LEVEL_RE
+
+        device, action, level = self._home_parts(corrected, intent)
+        if not device or device in self._DEGENERATE:
+            known = self._home_devices()
+            if known:
+                return f"Which device? I know: {', '.join(known)}."
+            return "Which device?"
+        if action == "set" and level is None:
+            match = HOME_LEVEL_RE.search(corrected)
+            level = int(match.group(1)) if match else None
+            if level is None:
+                return "What level should I set it to?"
+
+        extra = {"action": action}
+        if level is not None:
+            extra["level"] = level
+        return self.command.execute(intent, device, extra)
+
+    @staticmethod
+    def _home_devices():
+        """Known device names, or an empty list when nothing is set up."""
+        try:
+            from Home.device_registry import DeviceRegistry
+
+            return DeviceRegistry().names()
+        except Exception:  # noqa: BLE001 - never break a turn on config
+            return []
+
     def _extract(self, text, intent):
+        if intent in ("HOME_CONTROL", "HOME_UNLOCK"):
+            return self._home_parts(text, intent)[0]
+
         if intent == "OPEN_APP":
             for verb in VERBS_OPEN:
                 if text.startswith(verb):

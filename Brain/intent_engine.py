@@ -1,12 +1,63 @@
 import re
 
 
+# Words that name a smart-home device. Kept here, next to the patterns
+# that use them, so a new device type is one edit.
+HOME_DEVICE_WORDS = (
+    "light", "lights", "lamp", "lamps", "fan", "fans", "plug", "plugs",
+    "thermostat", "radiator", "blind", "blinds", "curtain", "curtains",
+    "speaker", "television", "tv", "lock", "door",
+)
+
+HOME_ON_WORDS = ("turn on", "switch on", "put on", "light up")
+HOME_OFF_WORDS = ("turn off", "switch off", "put out", "kill the lights")
+HOME_TOGGLE_WORDS = ("toggle", "flip")
+HOME_STATUS_WORDS = ("is the", "what state", "status of", "are the")
+HOME_UNLOCK_WORDS = ("unlock", "open the door", "open the front door")
+HOME_LEVEL_RE = re.compile(r"(\d{1,3})\s*(?:%|percent)?")
+
+
+def _home_intent(text, tokens):
+    """Classify a smart-home request, or None.
+
+    Ordered so a lock wins over a light in the same sentence ("turn off the
+    porch light and unlock the front door"), and so a destructive word is
+    never mistaken for a switch.
+    """
+    if not any(word in text for word in HOME_DEVICE_WORDS):
+        return None
+
+    if any(phrase in text for phrase in HOME_UNLOCK_WORDS):
+        return "HOME_UNLOCK"
+
+    if any(phrase in text for phrase in HOME_STATUS_WORDS):
+        return "HOME_CONTROL"
+
+    if "dim" in text or "brightness" in text:
+        return "HOME_CONTROL"
+
+    if any(word in tokens for word in ("lock", "unlock")):
+        return "HOME_UNLOCK"
+    return "HOME_CONTROL"
+
+
 class IntentEngine:
     """Classify routing intent for a normalized command string."""
 
     def classify(self, text):
         text = text.lower().replace(",", " ").replace("?", " ").strip()
         tokens = re.findall(r"[\w']+", text)
+
+        # --------------------------------------------------
+        # Home automation (Phase 13)
+        # --------------------------------------------------
+        # Ahead of the app verbs on purpose: "open the front door" starts
+        # with "open", and a door is not an application. _home_intent
+        # returns None unless a device word is present, so "open brave"
+        # still falls through to OPEN_APP.
+        home = _home_intent(text, tokens)
+        if home:
+            return home
 
         # --------------------------------------------------
         # Open / close applications

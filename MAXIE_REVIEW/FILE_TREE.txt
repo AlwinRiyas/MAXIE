@@ -1,0 +1,169 @@
+MAXIE — COMPLETE FILE TREE
+Generated : 2026-09-28 14:59 UTC
+Package   : MAXIE_REVIEW/  (tree mirrors the project root)
+Files     : 127 source files (343107 bytes total)
+Excluded  : .git, MAXIE_REVIEW/, __pycache__, .vscode/, Installers-artefacts,
+            Memory/maxie_memory.db, Memory/memory.json, Logs/*.log, *.wav,
+            Config/tts_models/  (see EXCLUSIONS.md for the full list)
+
+NOTE: files marked (EMPTY) are 0-byte placeholders in the real project,
+      not packaging artifacts. They are listed so the reviewer can see
+      the real state of the codebase.
+
+================================================================
+DIRECTORY SUMMARY
+================================================================
+  .                                         10 file(s)
+  AI                                         4 file(s)
+  Automation                                 3 file(s)
+  Brain                                      8 file(s)
+  Config                                     6 file(s)
+  Conversation                               2 file(s)
+  Core                                       7 file(s)
+  Docs                                       7 file(s)
+  Installers                                 2 file(s)
+  Interface                                  3 file(s)
+  Logs                                       2 file(s)
+  Memory                                     3 file(s)
+  Models                                     1 file(s)
+  Plugins                                    1 file(s)
+  Resourses                                  1 file(s)
+  Security                                   2 file(s)
+  Skills                                    18 file(s)
+  Tests                                     22 file(s)
+  Ui                                         2 file(s)
+  Vision                                     1 file(s)
+  Voice                                     15 file(s)
+  WakeWord                                   4 file(s)
+  Weather                                    3 file(s)
+
+================================================================
+FULL LISTING
+================================================================
+  AGENTS.md                                              5752 B
+  AI/ai_engine.py                                        3117 B
+  AI/__init__.py                                            0 B  (EMPTY)
+  AI/ollama_client.py                                    3311 B
+  AI/prompts.py                                           962 B
+  Automation/application_discovery.py                    1108 B
+  Automation/__init__.py                                    0 B  (EMPTY)
+  Automation/system_info.py                               816 B
+  Brain/brain_router.py                                  8230 B
+  Brain/command_corrector.py                             3397 B
+  Brain/command_engine.py                                1430 B
+  Brain/command_parser.py                                 129 B
+  Brain/__init__.py                                         0 B  (EMPTY)
+  Brain/intent_detector.py                                389 B
+  Brain/intent_engine.py                                10027 B
+  Brain/voice_commands.py                                1793 B
+  CHANGELOG.md                                           5933 B
+  Config/audio_config.json                                634 B
+  Config/config.py                                       8563 B
+  Config/__init__.py                                        0 B  (EMPTY)
+  Config/personality.json                                 118 B
+  Config/system_config.json                               607 B
+  Config/voice_config.py                                    0 B  (EMPTY)
+  Conversation/conversation_engine.py                   12354 B
+  Conversation/__init__.py                                  0 B  (EMPTY)
+  Core/core_manager.py                                   4638 B
+  Core/date_engine.py                                     414 B
+  Core/event_bus.py                                       477 B
+  Core/greeting_engine.py                                 851 B
+  Core/__init__.py                                          0 B  (EMPTY)
+  Core/state_manager.py                                   475 B
+  Core/time_engine.py                                     268 B
+  DEVELOPMENT_STATUS.md                                  3319 B
+  Docs/API_REFERENCE.md                                     0 B  (EMPTY)
+  Docs/ARCHITECTURE.md                                      0 B  (EMPTY)
+  Docs/CHANGELOG.md                                         0 B  (EMPTY)
+  Docs/CODING_STANDARDS.md                                  0 B  (EMPTY)
+  Docs/__init__.py                                          0 B  (EMPTY)
+  Docs/MAXIE_PRINCIPLES.md                               2144 B
+  Docs/ROADMAP.md                                           0 B  (EMPTY)
+  FILE_TREE.txt                                          2134 B
+  .gitignore                                              457 B
+  Installers/set_autostart.py                            4357 B
+  Installers/setup_tts.py                                5490 B
+  Interface/__init__.py                                    48 B
+  Interface/mobile_ui.html                               7534 B
+  Interface/remote_server.py                            12175 B
+  Logs/__init__.py                                          0 B  (EMPTY)
+  Logs/logger.py                                         2053 B
+  main.py                                                 103 B
+  Memory/__init__.py                                        0 B  (EMPTY)
+  Memory/memory_database.py                              7575 B
+  Memory/memory_engine.py                                3430 B
+  Models/__init__.py                                        0 B  (EMPTY)
+  Plugins/__init__.py                                       0 B  (EMPTY)
+  README.md                                              6783 B
+  requirements.txt                                       1165 B
+  Resourses/__init__.py                                     0 B  (EMPTY)
+  run.py                                                 1390 B
+  Security/__init__.py                                      0 B  (EMPTY)
+  Security/permissions.py                                1548 B
+  Skills/app_database.json                              19798 B
+  Skills/app_launcher.py                                 3701 B
+  Skills/application_registry.py                         5785 B
+  Skills/calculator.py                                   6459 B
+  Skills/close_app_skill.py                               425 B
+  Skills/__init__.py                                        0 B  (EMPTY)
+  Skills/media_controller.py                             4068 B
+  Skills/memory_skill.py                                 1616 B
+  Skills/open_app_skill.py                                433 B
+  Skills/phone_controller.py                             3446 B
+  Skills/power_skill.py                                  2529 B
+  Skills/recommendation_skill.py                         2593 B
+  Skills/skill_manager.py                                7188 B
+  Skills/system_skill.py                                 2434 B
+  Skills/todo_skill.py                                   5752 B
+  Skills/volume_skill.py                                 6726 B
+  Skills/web_search.py                                   2325 B
+  Skills/youtube_skill.py                                 930 B
+  Tests/ai_test.py                                       2365 B
+  Tests/audio_stream_test.py                              867 B
+  Tests/calculator_test.py                               1366 B
+  Tests/config_test.py                                   1384 B
+  Tests/corrector_test.py                                1415 B
+  Tests/device_skills_test.py                            6965 B
+  Tests/event_test.py                                    1203 B
+  Tests/__init__.py                                         0 B  (EMPTY)
+  Tests/intent_test.py                                   2461 B
+  Tests/learning_test.py                                 2859 B
+  Tests/memory_test.py                                   2809 B
+  Tests/permissions_test.py                              1394 B
+  Tests/remote_server_test.py                            4288 B
+  Tests/run_tests.py                                     1785 B
+  Tests/state_test.py                                     819 B
+  Tests/system_test.py                                   2941 B
+  Tests/tts_test.py                                      6674 B
+  Tests/ui_test.py                                       4923 B
+  Tests/vad_test.py                                      1665 B
+  Tests/voice_commands_test.py                           1196 B
+  Tests/wakeword_test.py                                  610 B
+  Tests/web_search_test.py                               1209 B
+  Ui/gui.py                                              8564 B
+  Ui/__init__.py                                            0 B  (EMPTY)
+  USER_GUIDE.md                                         13332 B
+  Vision/__init__.py                                        0 B  (EMPTY)
+  Voice/audio_manager.py                                 3604 B
+  Voice/audio_recorder.py                                9251 B
+  Voice/audio_stream.py                                  2089 B
+  Voice/barge_in_listener.py                             9328 B
+  Voice/__init__.py                                         0 B  (EMPTY)
+  Voice/microphone.py                                     135 B
+  Voice/speech_engine.py                                  216 B
+  Voice/speech_pipeline.py                                729 B
+  Voice/transcriber.py                                   2587 B
+  Voice/vad_engine.py                                    6865 B
+  Voice/voice_config.py                                   186 B
+  Voice/voice_engine.py                                 18352 B
+  Voice/voice_manager.py                                  913 B
+  Voice/voice_state.py                                    132 B
+  Voice/wake_word_engine.py                                98 B
+  WakeWord/__init__.py                                      0 B  (EMPTY)
+  WakeWord/wake_listener.py                                 0 B  (EMPTY)
+  WakeWord/wake_models.py                                   0 B  (EMPTY)
+  WakeWord/wake_word_engine.py                              0 B  (EMPTY)
+  Weather/__init__.py                                       0 B  (EMPTY)
+  Weather/weather_config.py                              1595 B
+  Weather/weather_engine.py                              2240 B
