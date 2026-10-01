@@ -303,6 +303,20 @@ quoted-speech guard protects the transcript, not the planner's goal string, so a
 planner input (a calendar, an email, a web page) must be re-reviewed before it
 is allowed near `plan_prompt`.
 
+**Related, and the reason 12.10 is off by default:** the running conversation
+summary is model-written text that is re-injected into every later prompt, so
+it is an injection channel with a long reach — anything the model once read
+aloud could be compressed into it. Three properties keep it inert rather than
+useful (`Tests/context_summary_test.py`):
+1. it is stored with the `assistant` role and injected with an
+   `Earlier in this conversation:` marker, so it cannot arrive as a fresh
+   instruction from the user;
+2. it only ever summarises rows the user themselves produced in this
+   conversation — no external text is folded in;
+3. it is disabled unless `ai.summarise_after_turns` is set, and a failed
+   summary leaves the rows in place rather than substituting model text for
+   the user's own words.
+
 ---
 
 ## 4. What was probed vs. inferred

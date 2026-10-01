@@ -109,6 +109,10 @@ class AIEngine:
             self.memory.add_context("user", question)
             if answer:
                 self.memory.add_context("assistant", answer)
+            # ROADMAP 12.10: fold older turns once they pile up. Off by
+            # default (`summarise_after_turns: 0`) and failure-contained, so
+            # this costs nothing until it is enabled and never costs a turn.
+            self.memory.summariser(self.logger).summarise(self._summarise)
 
         if call is not None:
             # Name only: the proposed arguments can contain whatever the
@@ -118,6 +122,21 @@ class AIEngine:
                 f"({len(call[1])} argument(s))")
 
         return answer, call
+
+    def _summarise(self, transcript):
+        """Ask the model for a compressed record of older turns.
+
+        Prefers the chat endpoint so the tone matches the rest of the
+        conversation, and returns None on any failure -- the caller treats
+        None as "keep the rows".
+        """
+        if self.client.is_available() is False:
+            return None
+        return self.client.ask(
+            "Compress this conversation into at most four short factual "
+            "lines. Keep names, numbers, decisions and anything the user "
+            "said they want. Drop pleasantries. No preamble, just the "
+            "lines.\n\n" + transcript)
 
     def _apply_budget(self, history):
         """Bound the context payload (ROADMAP 9.6).

@@ -23,7 +23,10 @@
     "routing_mode": "controlled",
     "agent_enabled": false,
     "agent_max_iterations": 4,
-    "agent_max_steps": 4
+    "agent_max_steps": 4,
+    "summarise_after_turns": 0,
+    "summarise_keep_recent": 4,
+    "summary_max_chars": 600
   },
   "memory": {
     "conversation_cap": 500

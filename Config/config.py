@@ -61,6 +61,9 @@ class Config:
             "agent_enabled": False,
             "agent_max_iterations": 4,
             "agent_max_steps": 4,
+            "summarise_after_turns": 0,
+            "summarise_keep_recent": 4,
+            "summary_max_chars": 600,
         },
         "memory": {
             "conversation_cap": 500,
@@ -165,6 +168,10 @@ class Config:
         ("system", "ai", "agent_enabled"): (bool, None, None),
         ("system", "ai", "agent_max_iterations"): (int, 1, 10),
         ("system", "ai", "agent_max_steps"): (int, 1, 10),
+        # 0 keeps summarisation off; the shipped default is off.
+        ("system", "ai", "summarise_after_turns"): (int, 0, 50),
+        ("system", "ai", "summarise_keep_recent"): (int, 2, 20),
+        ("system", "ai", "summary_max_chars"): (int, 100, 4000),
         # system.memory
         ("system", "memory", "conversation_cap"): (int, 0, 100000),
         # system.remote_server

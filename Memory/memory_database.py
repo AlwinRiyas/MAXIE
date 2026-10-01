@@ -66,6 +66,21 @@ class MemoryDatabase:
                 )
                 """
             )
+            # One row, id 1: the running summary of turns that have already
+            # fallen out of the live window (ROADMAP 12.10). A table rather
+            # than a row in `conversation`, because the prune above would
+            # eventually delete the oldest row -- which is exactly where the
+            # summary would live.
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS context_summary (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    text TEXT NOT NULL,
+                    summarised_through INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
 
     def close(self):
         try:
@@ -270,6 +285,65 @@ class MemoryDatabase:
                 (cap,),
             )
 
+    # ----------------------------------------------------------
+    # Running context summary (ROADMAP 12.10)
+    # ----------------------------------------------------------
+
+    def save_summary(self, text, summarised_through):
+        """Replace the running summary and note how far it reaches."""
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO context_summary "
+                "  (id, text, summarised_through, updated_at) "
+                "VALUES (1, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "  text = excluded.text, "
+                "  summarised_through = excluded.summarised_through, "
+                "  updated_at = excluded.updated_at",
+                (text, int(summarised_through),
+                 datetime.now().isoformat()),
+            )
+
+    def get_summary(self):
+        """``(text, summarised_through)`` for the stored summary, or
+        ``(None, 0)`` when there is none."""
+        try:
+            row = self._conn.execute(
+                "SELECT text, summarised_through FROM context_summary "
+                "WHERE id = 1"
+            ).fetchone()
+        except Exception:  # noqa: BLE001 - a missing table must not break
+            return None, 0      # a turn; the summary is an enhancement
+        if not row:
+            return None, 0
+        return row["text"], int(row["summarised_through"])
+
+    def newest_context_id(self):
+        """The id of the newest conversation row, or 0 when empty."""
+        row = self._conn.execute(
+            "SELECT COALESCE(MAX(id), 0) AS n FROM conversation"
+        ).fetchone()
+        return int(row["n"]) if row else 0
+
+    def context_rows_before(self, row_id):
+        """The conversation rows a summary would have to cover."""
+        rows = self._conn.execute(
+            "SELECT id, role, text FROM conversation WHERE id < ? "
+            "ORDER BY id ASC", (int(row_id),)
+        ).fetchall()
+        return [(r["id"], r["role"], r["text"]) for r in rows]
+
+    def context_size(self):
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM conversation").fetchone()
+        return int(row["n"]) if row else 0
+
+    def delete_context_before(self, row_id):
+        """Drop rows already covered by the stored summary."""
+        with self._conn:
+            self._conn.execute(
+                "DELETE FROM conversation WHERE id < ?", (int(row_id),))
+
     def get_context(self, max_turns=10):
         cur = self._conn.execute(
             "SELECT role, text FROM conversation ORDER BY id ASC"
@@ -285,6 +359,7 @@ class MemoryDatabase:
     def clear_context(self):
         with self._conn:
             self._conn.execute("DELETE FROM conversation")
+            self._conn.execute("DELETE FROM context_summary")
 
     # ----------------------------------------------------------
     # Migration from the legacy JSON store

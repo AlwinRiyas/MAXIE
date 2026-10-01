@@ -58,6 +58,12 @@ main.py / run.py
 tests the live `VoiceStateMachine`. Do not treat `event_bus.py` as the real
 event system.
 
+Context: `MemoryEngine.get_context()` returns the running summary (when
+enabled) followed by the newest `ai.context_turns` rows. Summarisation is
+**off by default** (`ai.summarise_after_turns: 0`) and never destructive: a
+failed summary leaves every row in place, and the summary row carries the
+`assistant` role so it cannot be replayed as something the user said.
+
 Continuous learning: `BrainRouter._auto_learn()` silently persists
 preference phrases ("i like/love/prefer", "my favorite", "i am
 learning/studying") into SQLite; `MemoryDatabase.SYNONYMS` (reverse
@@ -220,7 +226,7 @@ Still open, in priority order:
 
 - A bug fix ships with a test that **fails without the fix**. Verify both
   directions before claiming it is done.
-- Never reduce the test count. Baseline is 529 passing, 2 skipped.
+- Never reduce the test count. Baseline is 559 passing, 2 skipped.
 - `python Tests/run_tests.py` and `python -m compileall -q .` must both stay
   clean at the end of every change.
 - Mark hardware-dependent results **HARDWARE UNVERIFIED** until run on the real

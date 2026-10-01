@@ -31,6 +31,15 @@ class _ProbeClient(_FakeClient):
         return self.available
 
 
+class _NoOpSummariser:
+    """Summarisation is off unless configured; a fake store has nothing to
+    fold. Present so AIEngine's real dependency is satisfied rather than
+    skipped."""
+
+    def summarise(self, summarise_fn):
+        return None
+
+
 class _FakeMemory:
     def __init__(self):
         self.history = []
@@ -43,6 +52,9 @@ class _FakeMemory:
 
     def recall_for(self, prompt, top=3):
         return []
+
+    def summariser(self, logger=None):
+        return _NoOpSummariser()
 
 
 class AIEngineTest(unittest.TestCase):

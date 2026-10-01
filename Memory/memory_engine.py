@@ -1,4 +1,5 @@
 from Memory.memory_database import MemoryDatabase
+from Memory.context_summariser import SUMMARY_PREFIX
 
 
 class MemoryEngine:
@@ -105,11 +106,28 @@ class MemoryEngine:
         self.db.add_context(role, text)
 
     def get_context(self, max_turns=None):
+        """The live window, prefixed by the running summary (12.10).
+
+        The summary is stored with the `assistant` role: it is the
+        assistant's own compressed record of earlier turns, so re-injecting
+        it can never present the user's words back to the model as if they
+        had just been said.
+        """
         from Config.config import Config
 
         if max_turns is None:
             max_turns = Config.ai_config().get("context_turns", 6)
-        return self.db.get_context(max_turns)
+        rows = self.db.get_context(max_turns)
+        summary, _through = self.db.get_summary()
+        if summary:
+            rows = [("assistant", f"{SUMMARY_PREFIX}{summary}")] + rows
+        return rows
+
+    def summariser(self, logger=None):
+        """A ContextSummariser over this engine's store."""
+        from Memory.context_summariser import ContextSummariser
+
+        return ContextSummariser(self, logger)
 
     def clear_context(self):
         self.db.clear_context()

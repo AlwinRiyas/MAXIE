@@ -170,7 +170,8 @@ order:
 3. `IntentEngine` extract intent
 4. `_auto_learn()` — persist preference phrases to SQLite
 5. append conversation context
-6. memory-extraction of the user utterance
+6. memory-extraction of the user utterance, and folding of older context
+   into the running summary (`Memory/context_summariser.py`, opt-in)
 7. destructive-action confirmation gate
 8. direct skill match
 9. skills-list query
