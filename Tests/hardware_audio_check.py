@@ -1,11 +1,10 @@
 """MAXIE physical audio verification helper.
 
-Run on the target laptop from the MAXIE repository:
+Run on the target laptop:
     python Tests/hardware_audio_check.py
 
-This script performs only diagnostics. It does not modify MAXIE configuration,
-source files, models, or persistent memory. Hardware-dependent conclusions
-must be based on the output from the target machine.
+Diagnostic only. It does not modify MAXIE configuration, source, models, or
+persistent memory. Hardware conclusions must come from the target machine.
 """
 
 from __future__ import annotations
@@ -18,7 +17,6 @@ import time
 import wave
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -30,7 +28,7 @@ def report(name: str, status: str, detail: str = "") -> None:
         print(f"            {detail}")
 
 
-def check_import(module: str) -> bool:
+def available(module: str) -> bool:
     return importlib.util.find_spec(module) is not None
 
 
@@ -38,31 +36,25 @@ def main() -> int:
     print("=" * 72)
     print("MAXIE 1 — TASK 2 PHYSICAL AUDIO VERIFICATION")
     print("=" * 72)
-    print("This is a diagnostic only. No MAXIE source/configuration is modified.")
+    print("Diagnostic only; no MAXIE source/configuration is modified.")
     print()
 
-    print("Environment")
-    print(f"Python: {sys.version.split()[0]}")
-    print(f"Platform: {sys.platform}")
-    print(f"Repository: {ROOT}")
-    print()
+    deps = {
+        "numpy": available("numpy"),
+        "sounddevice": available("sounddevice"),
+        "torch": available("torch"),
+        "silero_vad": available("silero_vad"),
+        "faster_whisper": available("faster_whisper"),
+    }
 
     print("1. Dependency availability")
-    deps = {
-        "numpy": check_import("numpy"),
-        "sounddevice": check_import("sounddevice"),
-        "torch": check_import("torch"),
-        "silero_vad": check_import("silero_vad"),
-        "faster_whisper": check_import("faster_whisper"),
-    }
     for name, present in deps.items():
         report(f"import {name}", "PASS" if present else "UNVERIFIED",
                "available" if present else "not installed in this Python environment")
     print()
 
     if not deps["sounddevice"]:
-        report("Audio device enumeration", "UNVERIFIED",
-               "sounddevice is unavailable; install/use the project's intended audio dependency.")
+        report("Audio device enumeration", "UNVERIFIED", "sounddevice unavailable")
     else:
         try:
             import sounddevice as sd
@@ -81,8 +73,8 @@ def main() -> int:
             report("Audio device enumeration", "FAIL", repr(exc))
     print()
 
-    print("2. Microphone capture diagnostic")
     capture_path = None
+    print("2. Microphone capture")
     if not deps["sounddevice"] or not deps["numpy"]:
         report("Microphone capture", "UNVERIFIED",
                "sounddevice and/or numpy unavailable")
@@ -106,7 +98,9 @@ def main() -> int:
             rms = float(np.sqrt(np.mean(audio * audio)))
             peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
 
-            fd, capture_path = tempfile.mkstemp(prefix="maxie_task2_", suffix=".wav")
+            fd, capture_path = tempfile.mkstemp(
+                prefix="maxie_task2_", suffix=".wav"
+            )
             os.close(fd)
             with wave.open(capture_path, "wb") as wav:
                 wav.setnchannels(1)
@@ -117,28 +111,29 @@ def main() -> int:
 
             if peak <= 0.0001:
                 report("Microphone capture", "FAIL",
-                       f"recording was effectively silent (RMS={rms:.6f}, peak={peak:.6f})")
+                       f"effectively silent: RMS={rms:.6f}, peak={peak:.6f}")
             else:
                 report("Microphone capture", "PASS",
-                       f"captured {seconds}s; RMS={rms:.6f}, peak={peak:.6f}")
+                       f"{seconds}s captured: RMS={rms:.6f}, peak={peak:.6f}")
         except Exception as exc:
             report("Microphone capture", "FAIL", repr(exc))
     print()
 
-    print("3. MAXIE VAD diagnostic")
+    print("3. MAXIE VAD")
     if capture_path is None:
-        report("VAD on physical recording", "UNVERIFIED",
-               "no physical microphone recording was produced")
+        report("VAD on physical recording", "UNVERIFIED", "no recording available")
     else:
         try:
             import numpy as np
-            import soundfile as sf
-
             from Voice.vad_engine import VADEngine
 
-            audio, rate = sf.read(capture_path, dtype="float32")
-            audio = np.asarray(audio).reshape(-1)
+            with wave.open(capture_path, "rb") as wav:
+                rate = wav.getframerate()
+                frames = wav.readframes(wav.getnframes())
 
+            audio = (
+                np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+            )
             vad = VADEngine()
             if rate != vad.sample_rate:
                 report("VAD on physical recording", "UNVERIFIED",
@@ -147,40 +142,39 @@ def main() -> int:
                 timestamps = vad.get_speech_timestamps(audio)
                 if timestamps:
                     report("VAD on physical recording", "PASS",
-                           f"speech region(s) detected: {timestamps}")
+                           f"speech region(s): {timestamps}")
                 else:
                     report("VAD on physical recording", "FAIL",
-                           "no speech region detected in the spoken recording")
+                           "no speech region detected")
         except Exception as exc:
             report("VAD on physical recording", "UNVERIFIED", repr(exc))
     print()
 
-    print("4. Faster-Whisper real transcription diagnostic")
+    print("4. Faster-Whisper real transcription")
     if capture_path is None:
-        report("Real STT transcription", "UNVERIFIED",
-               "no physical microphone recording was produced")
+        report("Real STT transcription", "UNVERIFIED", "no recording available")
     elif not deps["faster_whisper"]:
         report("Real STT transcription", "UNVERIFIED",
-               "faster_whisper is not installed in this Python environment")
+               "faster_whisper unavailable")
     else:
         try:
             from faster_whisper import WhisperModel
 
-            print("            Loading the configured model may take time on first run.")
+            print("            Loading base.en may take time on first run.")
             model = WhisperModel("base.en", device="cpu", compute_type="int8")
             segments, info = model.transcribe(capture_path, beam_size=1)
             text = " ".join(segment.text.strip() for segment in segments).strip()
             if text:
                 report("Real STT transcription", "PASS",
-                       f"detected language={getattr(info, 'language', '?')}; text={text!r}")
+                       f"language={getattr(info, 'language', '?')}; text={text!r}")
             else:
                 report("Real STT transcription", "FAIL",
-                       "Whisper completed but returned no transcription")
+                       "Whisper returned no transcription")
         except Exception as exc:
             report("Real STT transcription", "FAIL", repr(exc))
     print()
 
-    print("5. TTS / speaker diagnostic")
+    print("5. TTS / speaker")
     try:
         from Voice.voice_engine import VoiceEngine
 
@@ -193,13 +187,12 @@ def main() -> int:
         elapsed = time.monotonic() - started
         report("TTS invocation", "PASS" if result is not False else "FAIL",
                f"speak() returned {result!r} after {elapsed:.2f}s")
-        print("            Confirm physically whether the phrase was audible.")
         report("Speaker playback", "UNVERIFIED",
                "requires human confirmation of audible playback")
     except Exception as exc:
         report("TTS invocation", "FAIL", repr(exc))
         report("Speaker playback", "UNVERIFIED",
-               "TTS invocation failed before physical playback could be confirmed")
+               "TTS invocation failed before physical playback confirmation")
     print()
 
     if capture_path:
@@ -210,7 +203,7 @@ def main() -> int:
 
     print("=" * 72)
     print("TASK 2 DIAGNOSTIC COMPLETE")
-    print("Do not treat UNVERIFIED results as PASS.")
+    print("UNVERIFIED is not PASS.")
     print("=" * 72)
     return 0
 
